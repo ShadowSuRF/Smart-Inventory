@@ -1,0 +1,9 @@
+{
+  "name": "smart-inventory-root",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently \"cd frontend && npm run dev\" \"cd backend && npm run dev\"",
+    "install:all": "cd frontend && npm install && cd ../backend && npm install"
+  },
+  "devDependencies": { "concurrently": "^8.2.2" }
+}
