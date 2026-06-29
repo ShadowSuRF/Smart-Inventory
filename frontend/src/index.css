@@ -1,0 +1,109 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Accent color vars (default: blue) ──────────────────────────── */
+:root {
+  --ac:          #2563eb;
+  --acd:         #1d4ed8;
+  --acl:         #2563eb1a;
+  --card-p:      16px;
+  --card-gap:    16px;
+  --base-font:   14px;
+}
+
+/* ── Base ────────────────────────────────────────────────────────── */
+@layer base {
+  * { box-sizing: border-box; }
+  html { font-size: var(--base-font); }
+  body {
+    @apply bg-slate-100 dark:bg-slate-950 text-slate-900 dark:text-slate-100;
+    font-family: 'Inter', system-ui, sans-serif;
+    transition: background-color 0.2s, color 0.2s;
+  }
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track { @apply bg-transparent; }
+  ::-webkit-scrollbar-thumb { @apply bg-slate-300 dark:bg-slate-600 rounded-full; }
+}
+
+/* ── Components ──────────────────────────────────────────────────── */
+@layer components {
+  /* Card — respects density var */
+  .card {
+    @apply bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl;
+    padding: var(--card-p);
+    transition: padding 0.15s;
+  }
+
+  /* Buttons — use CSS var for accent */
+  .btn {
+    @apply inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all cursor-pointer border;
+  }
+  .btn-primary {
+    background-color: var(--ac);
+    border-color: var(--ac);
+    @apply text-white;
+  }
+  .btn-primary:hover {
+    background-color: var(--acd);
+    border-color: var(--acd);
+  }
+  .btn-secondary {
+    @apply bg-white hover:bg-slate-50 dark:bg-slate-800 dark:hover:bg-slate-700
+           text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-600;
+  }
+  .btn-danger  { @apply bg-red-500 hover:bg-red-600 text-white border-red-500; }
+  .btn-success { @apply bg-green-600 hover:bg-green-700 text-white border-green-600; }
+
+  /* Input — accent focus ring */
+  .input {
+    @apply w-full px-3 py-2 text-sm rounded-lg border border-slate-200 dark:border-slate-600
+           bg-slate-50 dark:bg-slate-700 text-slate-900 dark:text-slate-100
+           focus:outline-none focus:border-transparent;
+    transition: box-shadow 0.15s;
+  }
+  .input:focus {
+    box-shadow: 0 0 0 2px var(--ac);
+  }
+
+  .label {
+    @apply block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1;
+  }
+  .badge {
+    @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium;
+  }
+  .kpi-card {
+    @apply card flex flex-col gap-1;
+  }
+
+  /* Sidebar nav — uses accent var */
+  .sidebar-link {
+    @apply flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium
+           text-slate-600 dark:text-slate-400
+           hover:bg-slate-100 dark:hover:bg-slate-700
+           hover:text-slate-900 dark:hover:text-slate-100
+           transition-all cursor-pointer;
+  }
+  .sidebar-link.active {
+    color: white !important;
+    background-color: var(--ac) !important;
+  }
+  .sidebar-link.active:hover {
+    background-color: var(--acd) !important;
+  }
+
+  /* Toggle knob — accent color */
+  .toggle-track-on  { background-color: var(--ac) !important; }
+  .toggle-track-off { @apply bg-slate-200 dark:bg-slate-600; }
+
+  /* Range slider accent */
+  input[type="range"] {
+    accent-color: var(--ac);
+  }
+
+  /* Accent utility classes using CSS var */
+  .text-accent   { color: var(--ac) !important; }
+  .bg-accent     { background-color: var(--ac) !important; }
+  .border-accent { border-color: var(--ac) !important; }
+  .ring-accent   { --tw-ring-color: var(--ac) !important; }
+}
