@@ -1,0 +1,49 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build output
+dist/
+build/
+*.js.map
+
+# Environment files
+.env
+.env.local
+.env.production
+backend/.env
+frontend/.env
+
+# ML model artifacts (besar, retrain dari Colab)
+ml/gb_demand.pkl
+ml/gb_profit.pkl
+ml/lstm_weights.npz
+ml/rf_model.npz
+ml/monthly_stats.npz
+ml/feat_mean.npy
+ml/feat_std.npy
+ml/feature_names.npy
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/settings.json
+.idea/
+*.swp
+
+# Logs
+*.log
+npm-debug.log*
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+venv/
+.venv/
+
+# TypeScript
+*.tsbuildinfo
