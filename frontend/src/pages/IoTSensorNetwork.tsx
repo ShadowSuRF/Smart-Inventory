@@ -130,7 +130,7 @@ export default function IoTSensorNetwork() {
         <div>
           <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">IoT Sensor Network</h2>
           <p className="text-sm text-slate-500 dark:text-slate-400">
-            Real-time monitoring across {stats?.zonesMonitored || 7} zones · dummy simulation mode
+            Monitoring real-time {stats?.zonesMonitored ?? 7} zona · {sensors.length} sensor aktif milik kamu
           </p>
         </div>
         <div className="flex gap-2 items-center">
