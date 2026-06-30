@@ -1,7 +1,9 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import Modal from '../components/ui/Modal'
 import { logout } from '../lib/api'
+import api from '../lib/api'
+import { isConnected } from '../lib/mqtt'
 import {
   useSettings,
   ACCENTS,
@@ -59,6 +61,32 @@ export default function Settings() {
   const savedUser = JSON.parse(localStorage.getItem('user') || '{}')
   const [profileModal, setProfileModal] = useState(false)
   const [resetModal, setResetModal] = useState(false)
+  const [mqttLive, setMqttLive] = useState(false)
+  const [mlStats, setMlStats] = useState<any>(null)
+  const [backendOk, setBackendOk] = useState<boolean | null>(null)
+  const [dbOk, setDbOk] = useState<boolean | null>(null)
+  useEffect(() => {
+    const t = setInterval(() => setMqttLive(isConnected()), 2000)
+    return () => clearInterval(t)
+  }, [])
+  useEffect(() => {
+    api.get('/forecasting/ml-stats').then(r => setMlStats(r.data?.data)).catch(() => {})
+  }, [])
+  // Check real backend + DB health (pakai endpoint /health yg udah ada di backend)
+  useEffect(() => {
+    const check = () => {
+      api.get('/health').then(r => {
+        setBackendOk(true)
+        setDbOk(r.data?.db === 'connected')
+      }).catch(() => {
+        setBackendOk(false)
+        setDbOk(false)
+      })
+    }
+    check()
+    const t = setInterval(check, 10000)
+    return () => clearInterval(t)
+  }, [])
   const [profile, setProfile] = useState({
     name: savedUser.name || '',
     role: savedUser.role || '',
@@ -427,11 +455,28 @@ export default function Settings() {
         <SectionTitle>ℹ️ System Information</SectionTitle>
         {[
           { t: 'App Version',  d: 'Smart Inventory and Waste Reducer', v: 'v2.4.1' },
-          { t: 'Frontend',     d: 'React 18 + TypeScript + Tailwind CSS',         v: <span className="badge bg-green-100 text-green-700">Running</span> },
-          { t: 'Backend',      d: 'Node.js + Express on port 5001',               v: <span className="badge bg-green-100 text-green-700">Online</span> },
-          { t: 'Database',     d: 'MongoDB Atlas via Mongoose',                   v: <span className="badge bg-green-100 text-green-700">Connected</span> },
-          { t: 'MQTT Broker',  d: 'HiveMQ Cloud — MQTT over WebSocket',           v: <span className="badge bg-amber-100 text-amber-700">Not configured</span> },
-          { t: 'ML Model',     d: 'Pure NumPy LSTM — last trained 2h ago',        v: <span className="badge bg-purple-100 text-purple-700">94.2% accuracy</span> },
+          { t: 'Frontend',     d: 'React 18 + TypeScript + Tailwind CSS',
+              v: <span className="badge bg-green-100 text-green-700">Running</span> },
+          { t: 'Backend',      d: 'Node.js + Express on port 5001',
+              v: backendOk === null
+                ? <span className="badge bg-slate-100 text-slate-500">Checking…</span>
+                : backendOk
+                ? <span className="badge bg-green-100 text-green-700">Online</span>
+                : <span className="badge bg-red-100 text-red-700">Offline</span> },
+          { t: 'Database',     d: 'MongoDB Atlas via Mongoose',
+              v: dbOk === null
+                ? <span className="badge bg-slate-100 text-slate-500">Checking…</span>
+                : dbOk
+                ? <span className="badge bg-green-100 text-green-700">Connected</span>
+                : <span className="badge bg-red-100 text-red-700">Disconnected</span> },
+          { t: 'MQTT Broker',  d: `HiveMQ — topic privat per user${settings.iot.simMode ? ' (Simulation Mode aktif)' : ''}`,
+              v: settings.iot.simMode
+                ? <span className="badge bg-amber-100 text-amber-700">Sim Mode</span>
+                : mqttLive
+                ? <span className="badge bg-green-100 text-green-700">Connected</span>
+                : <span className="badge bg-slate-100 text-slate-500">Disconnected</span> },
+          { t: 'ML Model',     d: mlStats ? `${mlStats.model_type} — trained on ${(mlStats.training_rows||31850).toLocaleString()} rows` : 'Memuat info model…',
+              v: <span className="badge bg-purple-100 text-purple-700">{mlStats ? `${mlStats.demand_accuracy}% accuracy` : '—'}</span> },
           { t: 'Active Accent',d: `CSS --ac = ${ACCENTS[settings.accent].hex}`,   v: <span className="w-4 h-4 rounded-full inline-block border border-slate-200" style={{ backgroundColor: 'var(--ac)' }} /> },
           { t: 'Current Theme',d: 'Applied globally via dark class on <html>',    v: <span className="badge bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300">{settings.theme}</span> },
         ].map(r => (
