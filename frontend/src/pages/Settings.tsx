@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import Modal from '../components/ui/Modal'
 import { logout } from '../lib/api'
 import api from '../lib/api'
+import axios from 'axios'
 import { isConnected } from '../lib/mqtt'
 import {
   useSettings,
@@ -73,9 +74,12 @@ export default function Settings() {
     api.get('/forecasting/ml-stats').then(r => setMlStats(r.data?.data)).catch(() => {})
   }, [])
   // Check real backend + DB health (pakai endpoint /health yg udah ada di backend)
+  // CATATAN: pakai axios langsung (bukan api client), karena api client punya
+  // baseURL '/api' sehingga api.get('/health') → /api/health (404).
+  // Health endpoint backend ada di /health, bukan /api/health.
   useEffect(() => {
     const check = () => {
-      api.get('/health').then(r => {
+      axios.get('/health', { timeout: 5000 }).then(r => {
         setBackendOk(true)
         setDbOk(r.data?.db === 'connected')
       }).catch(() => {
