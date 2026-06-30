@@ -1,53 +1,47 @@
 import { useEffect, useState, useCallback } from 'react'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
-import { getAnalytics, getIoTSensors } from '../lib/api'
-import { Spinner } from '../components/ui/PageLoader'
+import { getAnalytics, getAnalyticsHeatmap } from '../lib/api'
 import toast from 'react-hot-toast'
 
 const ratingBadge = (r: string) =>
   r==='excellent'?'bg-green-100 text-green-700':r==='good'?'bg-blue-100 text-blue-700':r==='average'?'bg-amber-100 text-amber-700':'bg-red-100 text-red-700'
-const heatColor = (v: number) =>
-  v>=80?'bg-green-500 text-white':v>=65?'bg-green-300 text-green-900':v>=50?'bg-amber-300 text-amber-900':'bg-red-300 text-red-900'
 
-const ZONES  = ['Zone A','Zone B','Zone C','Zone D','Zone E','Zone F','Zone G']
-const DAYS   = ['Sen','Sel','Rab','Kam','Jum','Sab','Min']
+function heatColor(v: number) {
+  if (v >= 80) return 'bg-green-500 text-white'
+  if (v >= 65) return 'bg-green-300 text-green-900'
+  if (v >= 50) return 'bg-amber-300 text-amber-900'
+  if (v >= 30) return 'bg-orange-300 text-orange-900'
+  return 'bg-red-400 text-white'
+}
+function statusBadge(s: string) {
+  if (s === 'warning') return 'badge bg-amber-100 text-amber-700'
+  if (s === 'critical') return 'badge bg-red-100 text-red-700'
+  if (s === 'low') return 'badge bg-orange-100 text-orange-700'
+  return 'badge bg-green-100 text-green-700'
+}
+
+interface HeatZone {
+  zone: string; baseFill: number; days: number[]; deviceCount: number; itemCount: number
+  avgTemp: number | null; avgHumidity: number | null; status: string
+}
 
 export default function Analytics() {
   const [data, setData]       = useState<any>(null)
-  const [heatmap, setHeatmap] = useState<number[][]>([])
+  const [zones, setZones]     = useState<HeatZone[]>([])
+  const [heatDays, setHeatDays] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
 
   const fetchData = useCallback(async () => {
     setLoading(true)
     try {
-      const [analyticsRes, sensorRes] = await Promise.all([
+      const [analyticsRes, heatmapRes] = await Promise.all([
         getAnalytics(),
-        getIoTSensors().catch(() => null),
+        getAnalyticsHeatmap().catch(() => null),
       ])
       setData(analyticsRes.data.data)
-
-      // Bangun heatmap fill level dari sensor data per zona + hari
-      // Kalau belum ada sensor data, pakai data dari inventory items
-      if (sensorRes?.data?.data?.length) {
-        const sensors: any[] = sensorRes.data.data
-        // Simulasikan variasi 7 hari untuk tiap zona berdasarkan fill level sensor
-        const zones = ['A','B','C','D','E','F','G']
-        const hm = zones.map(zone => {
-          const zoneSensors = sensors.filter((s: any) => s.zone === zone)
-          const base = zoneSensors.length > 0
-            ? Math.round(zoneSensors.reduce((s: number, x: any) => s + (x.weight || 50), 0) / zoneSensors.length)
-            : 60
-          // Variasi per hari berdasarkan seed dari zona
-          return DAYS.map((_, di) => Math.min(100, Math.max(20, Math.round(base + (di * 3 - 9) + (Math.sin(di + zone.charCodeAt(0)) * 12)))))
-        })
-        setHeatmap(hm)
-      } else {
-        // Default dari fill level inventory jika IoT belum di-simulate
-        const items = analyticsRes.data.data?.totalItems || 0
-        const fillBase = analyticsRes.data.data?.fillRate || 70
-        setHeatmap(ZONES.map((_, zi) =>
-          DAYS.map((_, di) => Math.min(100, Math.max(20, Math.round(fillBase + (zi-3)*5 + (di-3)*4))))
-        ))
+      if (heatmapRes?.data?.data) {
+        setZones(heatmapRes.data.data)
+        setHeatDays(heatmapRes.data.days || ['Sen','Sel','Rab','Kam','Jum','Sab','Min'])
       }
     } catch {
       toast.error('Gagal memuat analytics')
@@ -58,7 +52,6 @@ export default function Analytics() {
 
   useEffect(() => { fetchData() }, [fetchData])
 
-  // Kalau data belum ada, tampilkan loading skeleton bukan nilai dummy
   const fmtK = (v: number) => v >= 1000 ? `$${(v/1000).toFixed(0)}K` : `$${v}`
 
   return (
@@ -71,7 +64,7 @@ export default function Analytics() {
         <button onClick={fetchData} className="btn btn-secondary text-xs">🔄 Refresh</button>
       </div>
 
-      {/* KPI dari data user sendiri */}
+      {/* KPI */}
       <div className="grid grid-cols-4 gap-4 mb-5">
         {loading ? [...Array(4)].map((_,i) => (
           <div key={i} className="kpi-card animate-pulse"><div className="h-8 bg-slate-200 dark:bg-slate-700 rounded" /></div>
@@ -79,7 +72,7 @@ export default function Analytics() {
           <>
             <div className="kpi-card">
               <div className="text-xs text-slate-500 dark:text-slate-400">Stock Turnover</div>
-              <div className="text-2xl font-semibold">{data?.stockTurnover ?? '—'} {data?.stockTurnover ? 'days' : ''}</div>
+              <div className="text-2xl font-semibold">{data?.stockTurnover ?? '—'}{data?.stockTurnover ? ' days' : ''}</div>
               <div className="text-xs text-slate-400">Rata-rata perputaran stok</div>
             </div>
             <div className="kpi-card">
@@ -102,7 +95,7 @@ export default function Analytics() {
       </div>
 
       <div className="grid grid-cols-2 gap-4 mb-4">
-        {/* Waste by Category - data real dari MongoDB user */}
+        {/* Waste by Category */}
         <div className="card">
           <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100 mb-3">Waste by Category</h3>
           {loading ? <div className="h-44 skeleton rounded-lg" /> : (
@@ -118,13 +111,13 @@ export default function Analytics() {
               </ResponsiveContainer>
             ) : (
               <div className="h-44 flex items-center justify-center text-sm text-slate-400">
-                Belum ada data waste — tambahkan inventory item terlebih dahulu
+                Belum ada data waste — tambahkan inventory item
               </div>
             )
           )}
         </div>
 
-        {/* Turnover rate - data real */}
+        {/* Stock Turnover Rate */}
         <div className="card">
           <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100 mb-3">Stock Turnover Rate</h3>
           {loading ? <div className="h-44 skeleton rounded-lg" /> : (
@@ -151,7 +144,7 @@ export default function Analytics() {
         </div>
       </div>
 
-      {/* Financial Summary - dari data nyata user */}
+      {/* Financial Summary */}
       <div className="grid grid-cols-3 gap-4 mb-4">
         {[
           { label: 'Total Revenue Est.', val: data?.totalRevenue, color: 'text-blue-600' },
@@ -167,37 +160,68 @@ export default function Analytics() {
         ))}
       </div>
 
-      {/* Heatmap - dari sensor IoT user atau estimasi dari fill level */}
+      {/* Heatmap — zona REAL milik user, bukan Zone A-G dummy */}
       <div className="card">
         <div className="flex items-center justify-between mb-3">
-          <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-            Stock Level Heatmap per Zona (Fill Level %)
-          </h3>
-          <span className="text-xs text-slate-400">Data dari sensor IoT kamu</span>
+          <div>
+            <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+              Stock Level Heatmap per Lokasi
+            </h3>
+            <p className="text-xs text-slate-400 mt-0.5">
+              Data dari zona IoT sensor & inventory kamu — bukan zona default
+            </p>
+          </div>
+          <div className="flex gap-1.5 text-xs text-slate-400 items-center">
+            <span className="w-3 h-3 rounded bg-green-500 inline-block" /> Penuh
+            <span className="w-3 h-3 rounded bg-amber-300 inline-block ml-2" /> Sedang
+            <span className="w-3 h-3 rounded bg-red-400 inline-block ml-2" /> Kritis
+          </div>
         </div>
-        {loading ? <div className="h-36 skeleton rounded-lg" /> : (
+
+        {loading ? <div className="h-36 skeleton rounded-lg" /> : zones.length === 0 ? (
+          <div className="text-center py-10 text-slate-400">
+            <div className="text-3xl mb-2">📡</div>
+            <div className="text-sm font-medium text-slate-600 dark:text-slate-300">Belum ada zona</div>
+            <div className="text-xs mt-1">
+              Tambahkan sensor di halaman <strong>IoT Sensor Network</strong> atau inventory item dengan zone, lalu klik Refresh
+            </div>
+          </div>
+        ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
                 <tr>
-                  <th className="text-left text-slate-400 font-normal pb-2 pr-3">Zona</th>
-                  {DAYS.map(d => <th key={d} className="text-slate-400 font-normal pb-2 px-1 text-center">{d}</th>)}
+                  <th className="text-left text-slate-400 font-normal pb-2 pr-3 w-28">Lokasi / Zona</th>
+                  {heatDays.map(d => <th key={d} className="text-slate-400 font-normal pb-2 px-1 text-center">{d}</th>)}
+                  <th className="text-slate-400 font-normal pb-2 px-2 text-center">Sensor</th>
+                  <th className="text-slate-400 font-normal pb-2 px-2 text-center">Suhu</th>
+                  <th className="text-slate-400 font-normal pb-2 px-2 text-center">Status</th>
                 </tr>
               </thead>
               <tbody>
-                {(heatmap.length > 0 ? ZONES : []).map((zone, zi) => (
-                  <tr key={zone}>
-                    <td className="pr-3 py-1 text-slate-500 dark:text-slate-400 font-medium">{zone}</td>
-                    {(heatmap[zi] || []).map((val, di) => (
+                {zones.map(z => (
+                  <tr key={z.zone} className="border-t border-slate-50 dark:border-slate-800">
+                    <td className="pr-3 py-1.5 text-slate-700 dark:text-slate-300 font-semibold max-w-[7rem] truncate" title={z.zone}>
+                      {z.zone}
+                    </td>
+                    {z.days.map((val, di) => (
                       <td key={di} className="px-1 py-1">
                         <div className={`rounded text-center py-1 text-xs font-semibold ${heatColor(val)}`}>{val}%</div>
                       </td>
                     ))}
+                    <td className="px-2 text-center text-slate-500 dark:text-slate-400">
+                      {z.deviceCount > 0 ? `📡 ${z.deviceCount}` : `📦 ${z.itemCount}`}
+                    </td>
+                    <td className="px-2 text-center text-slate-600 dark:text-slate-300">
+                      {z.avgTemp !== null ? `${z.avgTemp}°C` : '—'}
+                    </td>
+                    <td className="px-2 text-center">
+                      <span className={statusBadge(z.status)}>
+                        {z.status === 'warning' ? '⚠ Warning' : z.status === 'critical' ? '🔴 Kritis' : z.status === 'low' ? '🟠 Rendah' : '✓ Optimal'}
+                      </span>
+                    </td>
                   </tr>
                 ))}
-                {heatmap.length === 0 && (
-                  <tr><td colSpan={8} className="text-center text-slate-400 py-6">Simulate IoT di halaman IoT Sensor Network untuk mengisi heatmap ini</td></tr>
-                )}
               </tbody>
             </table>
           </div>

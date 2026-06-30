@@ -51,6 +51,9 @@ export const importInventoryExcel = (formData: FormData) =>
 export const getForecastPredictions = (horizon = 90) =>
   api.get('/forecasting/predictions', { params: { horizon } })
 export const getCategoryForecast = () => api.get('/forecasting/category')
+export const getItemForecast = (itemId: string, horizon = 90) =>
+  api.get(`/forecasting/item/${itemId}`, { params: { horizon } })
+export const getItemsForecastSummary = () => api.get('/forecasting/items-summary')
 export const triggerModelRetrain = () => api.post('/forecasting/retrain')
 
 export const getWasteItems = () => api.get('/waste/items')
@@ -68,7 +71,12 @@ export const updateSupplier = (id: string, data: unknown) => api.put(`/suppliers
 export const deleteSupplier = (id: string) => api.delete(`/suppliers/${id}`)
 
 export const getAnalytics = () => api.get('/analytics')
+export const getAnalyticsHeatmap = () => api.get('/analytics/heatmap')
 
+export const getIoTDevices = () => api.get('/iot/devices')
+export const createIoTDevice = (data: unknown) => api.post('/iot/devices', data)
+export const updateIoTDevice = (id: string, data: unknown) => api.put(`/iot/devices/${id}`, data)
+export const deleteIoTDevice = (id: string) => api.delete(`/iot/devices/${id}`)
 export const getIoTSensors = () => api.get('/iot/sensors')
 export const runIoTSimulation = () => api.post('/iot/simulate')
 export const getIoTHistory = () => api.get('/iot/history')
