@@ -1,8 +1,7 @@
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
-import { useEffect, Suspense, lazy } from 'react'
+import { Suspense, lazy } from 'react'
 import Layout from './components/layout/Layout'
 import PageLoader from './components/ui/PageLoader'
-import { connectMQTT } from './lib/mqtt'
 import { useSettings } from './context/SettingsContext'
 
 // Lazy load pages for faster initial load
@@ -41,8 +40,6 @@ function PageWrapper({ children }: { children: React.ReactNode }) {
 
 export default function App() {
   const { settings } = useSettings()
-
-  useEffect(() => { connectMQTT() }, [])
 
   return (
     <Suspense fallback={<PageLoader fullscreen text="Memuat Smart Inventory" />}>

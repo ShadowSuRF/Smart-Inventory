@@ -1,6 +1,6 @@
 import mongoose from 'mongoose'
 import dotenv from 'dotenv'
-import { User, InventoryItem, Supplier, WasteItem, Notification, ReplenishmentOrder, IoTSensorState, ImportLog } from './models'
+import { User, InventoryItem, Supplier, WasteItem, Notification, ReplenishmentOrder, IoTDevice, ImportLog } from './models'
 
 dotenv.config()
 
@@ -17,7 +17,7 @@ async function seed() {
     WasteItem.deleteMany({}),
     Notification.deleteMany({}),
     ReplenishmentOrder.deleteMany({}),
-    IoTSensorState.deleteMany({}),
+    IoTDevice.deleteMany({}),
     ImportLog.deleteMany({}),
   ])
   console.log('[Seed] Cleared existing data')
@@ -86,6 +86,28 @@ async function seed() {
       { userId: uid, type:'info',     title:'AI Model Update',      message:`Demand forecasting model updated. Accuracy improved to 94.2%.`, read:true },
       { userId: uid, type:'success',  title:'Waste Milestone',      message:`You've prevented $4,280 in waste this month, exceeding target by 15%!`, read:true, actionRoute:'/analytics', actionLabel:'View Report' },
     ])
+
+    // IoT devices — contoh starter milik masing² user sendiri (bukan template global).
+    // User tetep bisa edit/hapus/nambah sendiri dari popup "Tambah Sensor" di halaman IoT.
+    const devicePresets: { name: string; zone: string; type: string; tempMin: number; tempMax: number; humMin: number; humMax: number }[] = [
+      { name: 'Cold Storage Sensor 1', zone: 'A', type: 'weight+temp',    tempMin: 2,   tempMax: 8,   humMin: 85, humMax: 95 },
+      { name: 'Dairy Fridge Sensor',   zone: 'B', type: 'temp+humidity', tempMin: 2,   tempMax: 6,   humMin: 70, humMax: 85 },
+      { name: 'Freezer Unit Sensor',   zone: 'D', type: 'temp+weight',   tempMin: -20, tempMax: -15, humMin: 30, humMax: 50 },
+      { name: 'Bakery Shelf Sensor',   zone: 'E', type: 'weight+rfid',   tempMin: 18,  tempMax: 24,  humMin: 50, humMax: 65 },
+    ]
+    for (const [i, p] of devicePresets.entries()) {
+      const deviceId = `SEN-${p.zone}${String(i + 1).padStart(3, '0')}`
+      const baseTemp = (p.tempMin + p.tempMax) / 2
+      const baseHum  = (p.humMin + p.humMax) / 2
+      await IoTDevice.create({
+        userId: uid, deviceId, name: p.name, zone: p.zone, type: p.type,
+        tempMin: p.tempMin, tempMax: p.tempMax, humMin: p.humMin, humMax: p.humMax,
+        mqttTopic: `smart-inventory/${uid}/${deviceId}`,
+        temperature: baseTemp, humidity: baseHum, weight: 0,
+        batteryLevel: 80 + Math.round(Math.random() * 20),
+        status: 'online', source: 'simulated', lastSeen: new Date(),
+      })
+    }
 
     console.log(`[Seed] Data seeded for ${user.email}`)
   }

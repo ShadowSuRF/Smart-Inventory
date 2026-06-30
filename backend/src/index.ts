@@ -16,6 +16,7 @@ import analyticsRoutes from './routes/analytics'
 import notificationRoutes from './routes/notifications'
 import { requireAuth } from './middleware/auth'
 import iotRoutes from './routes/iot'
+import { handleIoTMessage } from './services/iotService'
 
 dotenv.config()
 
@@ -71,7 +72,20 @@ function connectMQTT() {
       password: process.env.MQTT_PASSWORD,
       reconnectPeriod: 5000,
     })
-    client.on('connect', () => { console.log('[MQTT] Connected ✅'); client.subscribe('smart-inventory/#') })
+    client.on('connect', () => {
+      console.log('[MQTT] Connected ✅')
+      client.subscribe('smart-inventory/#')
+    })
+    // Sebelumnya gak ada listener 'message' sama sekali — handleIoTMessage()
+    // di iotService.ts gak akan pernah kepanggil walau broker beneran nyala.
+    client.on('message', (topic: string, payload: Buffer) => {
+      try {
+        const data = JSON.parse(payload.toString())
+        handleIoTMessage(topic, data).catch((e: Error) => console.error('[MQTT] handler error', e.message))
+      } catch {
+        console.warn('[MQTT] Ignored non-JSON payload on', topic)
+      }
+    })
     client.on('error', (e: Error) => console.error('[MQTT]', e.message))
   } catch { console.warn('[MQTT] Failed to connect') }
 }
