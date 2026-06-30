@@ -34,6 +34,8 @@ export default function AIForecasting() {
   const [search, setSearch]     = useState('')
   const [categoryFilter, setCategoryFilter] = useState('ALL')
   const [demand, setDemand]     = useState<any[]>([])
+  const [forecastSource, setForecastSource] = useState<'ml'|'fallback'|null>(null)
+  const [forecastAccuracy, setForecastAccuracy] = useState<number|null>(null)
   const [itemMeta, setItemMeta] = useState<ItemMeta | null>(null)
   const [catData, setCatData]   = useState<any[]>([])
   const [summary, setSummary]   = useState<any[]>([])
@@ -72,10 +74,14 @@ export default function AIForecasting() {
       if (selectedItemId === 'ALL') {
         const predRes = await getForecastPredictions(horizon)
         setDemand(predRes.data.data?.predictions || [])
+        setForecastSource(predRes.data.data?.source || null)
+        setForecastAccuracy(predRes.data.data?.accuracy ?? null)
         setItemMeta(null)
       } else {
         const itemRes = await getItemForecast(selectedItemId, horizon)
         setDemand(itemRes.data.data?.predictions || [])
+        setForecastSource(itemRes.data.data?.source || null)
+        setForecastAccuracy(itemRes.data.data?.accuracy ?? null)
         setItemMeta(itemRes.data.data)
       }
     } catch {
@@ -133,9 +139,23 @@ export default function AIForecasting() {
           </p>
         </div>
         <div className="flex gap-2 items-center">
-          <span className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400 border border-purple-200 dark:border-purple-800">
-            🧠 AI Model Active
-          </span>
+          {/* Status badge: jujur soal ML nyala atau tidak, dan akurasi beneran */}
+          {mlStats?.online ? (
+            <span className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400 border border-purple-200 dark:border-purple-800">
+              <span className="w-1.5 h-1.5 rounded-full bg-purple-500 animate-pulse" />
+              🧠 ML API Online
+              {mlStats.demand_accuracy != null && ` · ${mlStats.demand_accuracy}% acc`}
+            </span>
+          ) : mlStats?.online === false ? (
+            <span className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-900/20 dark:text-amber-400 dark:border-amber-800">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+              ⚠ ML API Offline — estimasi sederhana
+            </span>
+          ) : (
+            <span className="text-xs px-3 py-1.5 rounded-full bg-slate-100 text-slate-500 border border-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:border-slate-700">
+              Mengecek ML API…
+            </span>
+          )}
           <button onClick={refreshAll} className="btn btn-secondary text-xs">🔄</button>
         </div>
       </div>
@@ -144,11 +164,12 @@ export default function AIForecasting() {
       <div className="grid grid-cols-4 gap-4 mb-5">
         <div className="kpi-card">
           <div className="text-xs text-slate-500 dark:text-slate-400">Forecast Accuracy</div>
-          <div className="text-2xl font-semibold text-green-600">
-            {mlStats?.demand_accuracy ?? '—'}{mlStats ? '%' : ''}
+          <div className={`text-2xl font-semibold ${forecastAccuracy != null ? 'text-green-600' : 'text-slate-400'}`}>
+            {forecastAccuracy != null ? `${forecastAccuracy}%` : '—'}
           </div>
           <div className="text-xs text-slate-400">
-            {mlStats ? `MAPE ${mlStats.demand_mape}%` : 'Loading…'}
+            {forecastSource === 'ml' ? `MAPE ${mlStats?.demand_mape ?? '?'}%` :
+             forecastSource === 'fallback' ? 'Estimasi (start ML API dulu)' : 'Memuat…'}
           </div>
         </div>
         <div className="kpi-card">
@@ -252,7 +273,19 @@ export default function AIForecasting() {
           </div>
         </div>
 
-        {/* Info bar khusus produk spesifik */}
+        {/* Banner: jelas kalo lagi pakai estimasi bukan ML beneran */}
+        {forecastSource === 'fallback' && (
+          <div className="mb-4 p-3 rounded-lg bg-amber-50 border border-amber-200 dark:bg-amber-900/20 dark:border-amber-800 flex items-start gap-2">
+            <span className="text-amber-500 mt-0.5 flex-shrink-0">⚠</span>
+            <div>
+              <div className="text-xs font-semibold text-amber-700 dark:text-amber-400">ML API Offline — menggunakan estimasi sederhana</div>
+              <div className="text-xs text-amber-600 dark:text-amber-500 mt-0.5">
+                Data chart ini dihitung dari rumus seasonal math berbasis inventory kamu — <strong>bukan dari model Gradient Boosting</strong>.
+                Jalankan <code className="bg-amber-100 dark:bg-amber-900/40 px-1 rounded">python3 ml/app.py</code> di terminal untuk aktifkan ML API (port 5002).
+              </div>
+            </div>
+          </div>
+        )}
         {itemMeta && !chartLoading && (
           <div className="grid grid-cols-4 gap-3 mb-4">
             <div className="bg-slate-50 dark:bg-slate-800/50 rounded-lg p-2.5 text-center">

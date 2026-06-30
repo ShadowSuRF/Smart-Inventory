@@ -204,7 +204,23 @@ def train_gb_models(csv_path: str = CSV_PATH, make_plots: bool = False, compare:
     np.save(os.path.join(BASE, 'feat_mean.npy'), X_mean)
     np.save(os.path.join(BASE, 'feat_std.npy'), X_std)
     np.save(os.path.join(BASE, 'feature_names.npy'), np.array(FEATURES))
-    print('[ML] Saved gb_demand.pkl, gb_profit.pkl, feat_mean.npy, feat_std.npy, feature_names.npy')
+
+    # Simpan akurasi BENERAN dari training ini ke file JSON —
+    # supaya ModelManager._load() bisa baca angka ini (bukan hardcode 95.8%).
+    import json
+    metrics = {
+        'demand_accuracy': round(m_demand['acc'], 1),
+        'demand_mape':     round(m_demand['mape'], 1),
+        'profit_accuracy': round(m_profit['acc'], 1),
+        'profit_mape':     round(m_profit['mape'], 1),
+        'trained_at':      time.strftime('%Y-%m-%d %H:%M:%S'),
+        'training_rows':   len(X),
+        'n_features':      len(FEATURES),
+    }
+    with open(os.path.join(BASE, 'model_metrics.json'), 'w') as f:
+        json.dump(metrics, f, indent=2)
+    print(f'[ML] Saved gb_demand.pkl, gb_profit.pkl, feat_mean.npy, feat_std.npy, feature_names.npy, model_metrics.json')
+    print(f'[ML] Real accuracy → demand: {metrics["demand_accuracy"]}%  profit: {metrics["profit_accuracy"]}%')
 
     if make_plots:
         try:
@@ -438,8 +454,8 @@ class ModelManager:
         self.feat_mean  = None
         self.feat_std   = None
         self.feat_names = None
-        self.accuracy   = 95.8
-        self.mape       = 4.2
+        self.accuracy   = None   # None = belum bisa verify (Flask belum pernah train)
+        self.mape       = None   # Diisi dari model_metrics.json setelah training
         self.loaded     = False
         self.last_trained = time.time()
         self._load()
@@ -465,8 +481,25 @@ class ModelManager:
             if os.path.exists(paths['names']):
                 self.feat_names = np.load(paths['names'], allow_pickle=True).tolist()
 
+            # Load akurasi beneran dari file JSON hasil training —
+            # kalau file ini ada, berarti model pernah di-train dari sini dan
+            # angka ini genuine. Kalau gak ada, accuracy = None (jujur: belum tau).
+            metrics_path = os.path.join(BASE, 'model_metrics.json')
+            if os.path.exists(metrics_path):
+                import json
+                with open(metrics_path) as f:
+                    m = json.load(f)
+                self.accuracy = m.get('demand_accuracy')
+                self.mape     = m.get('demand_mape')
+            else:
+                # Pkl ada tapi metrics.json belum ada (model dari luar/lama) →
+                # accuracy unknown, jangan karang angka
+                self.accuracy = None
+                self.mape     = None
+
             self.loaded = True
-            print(f'[ML] Models loaded ✅  demand acc={self.accuracy}%')
+            acc_str = f'{self.accuracy}%' if self.accuracy else 'unknown (run training first)'
+            print(f'[ML] Models loaded ✅  demand acc={acc_str}')
         except Exception as e:
             print(f'[ML] Load failed: {e}')
             self.loaded = False
@@ -502,16 +535,18 @@ class ModelManager:
         if not self.loaded:
             return float(params.get('base_demand', 100))
         row  = self._build_row(params)
-        X_in = ((row - self.feat_mean) / self.feat_std).reshape(1, -1)
-        return max(0.0, float(self.gb_demand.predict(X_in)[0]))
+        # GB (tree model) tidak butuh normalisasi — langsung feed raw features.
+        # Sebelumnya ada normalisasi ((row - mean)/std) yang salah: model dilatih
+        # dengan raw features, tapi serving pakai normalized → accuracy jatuh dari
+        # 96.9% ke 41%. Feat_mean/std masih disimpan tapi bukan untuk GB.
+        return max(0.0, float(self.gb_demand.predict(row.reshape(1, -1))[0]))
 
     def predict_profit(self, params: dict) -> float:
         if not self.loaded:
             p = params
             return max(0.0, p.get('base_demand', 100) * p.get('price', 5) * 0.35)
         row  = self._build_row(params)
-        X_in = ((row - self.feat_mean) / self.feat_std).reshape(1, -1)
-        return max(0.0, float(self.gb_profit.predict(X_in)[0]))
+        return max(0.0, float(self.gb_profit.predict(row.reshape(1, -1))[0]))
 
     def forecast_days(self, params: dict, n_days: int = 30) -> list:
         results = []
@@ -686,12 +721,16 @@ def forecast_category():
 @app.route('/model/stats')
 def model_stats():
     return jsonify({'success': True, 'data': {
+        'online': True,                                      # Flask jalan beneran
+        'model_loaded': model.loaded,
         'model_type': 'GradientBoostingRegressor (scikit-learn)',
         'n_estimators': getattr(model.gb_demand, 'n_estimators', 300),
         'max_depth':    getattr(model.gb_demand, 'max_depth', 6),
         'n_features':   getattr(model.gb_demand, 'n_features_in_', 33),
         'training_rows': 31850, 'training_period': '2024-01 → 2026-06',
-        'demand_accuracy': model.accuracy, 'demand_mape': model.mape,
+        # accuracy bisa None kalau model belum pernah di-train dari sini
+        'demand_accuracy': model.accuracy,
+        'demand_mape': model.mape,
         'last_trained': time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(model.last_trained)),
     }})
 

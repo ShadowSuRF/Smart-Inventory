@@ -1,0 +1,9 @@
+{
+  "demand_accuracy": 96.9,
+  "demand_mape": 3.1,
+  "profit_accuracy": 95.7,
+  "profit_mape": 4.3,
+  "trained_at": "2026-06-30 13:21:00",
+  "training_rows": 30800,
+  "n_features": 33
+}

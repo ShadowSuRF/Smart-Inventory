@@ -93,11 +93,14 @@ router.get('/predictions', async (req: AuthRequest, res: Response) => {
       }))
       return res.json({
         success: true,
-        data: { predictions: mlPreds, horizon, accuracy: 94.2, mape: 5.8 }
+        // source: 'ml' → pakai Gradient Boosting beneran dari Flask
+        data: { predictions: mlPreds, horizon, accuracy: 94.2, mape: 5.8, source: 'ml' }
       })
     }
 
-    return res.json({ success: true, data: { predictions, horizon, accuracy: 94.2, mape: 5.8 } })
+    // Flask offline → fallback heuristik (rumus seasonal math, BUKAN model ML)
+    // accuracy: null supaya frontend gak tampilkan angka akurasi yang menyesatkan
+    return res.json({ success: true, data: { predictions, horizon, accuracy: null, mape: null, source: 'fallback' } })
   }
 
   // User belum punya inventory → tampil kosong, bukan global CSV
@@ -307,14 +310,23 @@ router.get('/monthly-profit', async (req: AuthRequest, res: Response) => {
 })
 
 // ── GET /api/forecasting/ml-stats ────────────────────────────────────
+// Kalau Flask ML API gak jalan, return status offline yang jelas —
+// JANGAN return 95.8% hardcode seolah model beneran aktif.
 router.get('/ml-stats', async (_req: Request, res: Response) => {
   const ml = await mlFetch('/model/stats')
-  if (ml?.success) return res.json({ success: true, data: ml.data })
+  if (ml?.success) return res.json({ success: true, data: { ...ml.data, online: true } })
+  // Flask offline → info statis dari file training (metadata), akurasi null
   res.json({
     success: true,
-    data: { model_type: 'Gradient Boosting (scikit-learn)', training_rows: 31850,
-            demand_accuracy: 95.8, demand_mape: 4.2, n_features: 33,
-            training_period: 'Jan 2024 — Jun 2026' }
+    data: {
+      online: false,           // frontend baca field ini buat tampilin status
+      model_type: 'Gradient Boosting (scikit-learn)',
+      training_rows: 31850,
+      demand_accuracy: null,   // null = belum bisa verify, Flask harus jalan dulu
+      demand_mape: null,
+      n_features: 33,
+      training_period: 'Jan 2024 — Jun 2026',
+    }
   })
 })
 
