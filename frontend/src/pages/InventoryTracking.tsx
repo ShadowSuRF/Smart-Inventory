@@ -1,192 +1,270 @@
 import { useEffect, useState, useCallback } from 'react'
 import { getInventory, createInventoryItem, updateInventoryItem, deleteInventoryItem } from '../lib/api'
 import Modal from '../components/ui/Modal'
-import FillBar from '../components/ui/FillBar'
-import Badge from '../components/ui/Badge'
-import { statusBadge } from '../lib/utils'
+import { Spinner } from '../components/ui/PageLoader'
 import type { InventoryItem } from '../types'
+import { statusColor, formatCurrency } from '../lib/utils'
 import toast from 'react-hot-toast'
 
 const CATS = ['Fresh Produce','Dairy','Beverages','Frozen','Bakery','Snacks','Prepared Foods']
+const ZONES = ['A','B','C','D','E','F','G']
+const EMPTY_FORM = {
+  name:'', rfid:'', category:'Fresh Produce', zone:'A', shelf:'1',
+  quantity:0, unitPrice:0, fillLevel:80, unit:'pcs', expiryDate:'', supplierId:'',
+}
 
-const EMPTY_FORM = { name:'', category:'Fresh Produce', zone:'', shelf:'', quantity:'', unitPrice:'', fillLevel:'80', rfid:'' }
+function ItemCard({ item, onEdit, onDelete, idx }:
+  { item:InventoryItem; onEdit:(i:InventoryItem)=>void; onDelete:(id:string)=>void; idx:number }) {
+  const fillColor = item.fillLevel >= 60 ? 'bg-green-500' : item.fillLevel >= 20 ? 'bg-amber-500' : 'bg-red-500'
+  const daysLeft = item.expiryDate
+    ? Math.max(0, Math.round((new Date(item.expiryDate).getTime()-Date.now())/86400000)) : null
+  return (
+    <div className="card card-hover animate-fade-in-scale" style={{ animationDelay:`${idx*40}ms` }}>
+      <div className="flex items-start justify-between mb-2">
+        <div className="flex-1 min-w-0">
+          <div className="font-semibold text-sm truncate">{item.name}</div>
+          <div className="text-xs text-slate-400 mt-0.5">{item.rfid} · Zone {item.zone}-{item.shelf}</div>
+        </div>
+        <span className={`badge text-xs ml-2 flex-shrink-0 ${statusColor(item.status)}`}>{item.status.replace('_',' ')}</span>
+      </div>
+
+      <div className="grid grid-cols-3 gap-2 text-center my-2">
+        <div className="bg-slate-50 dark:bg-slate-700/50 rounded-lg p-1.5">
+          <div className="text-xs text-slate-400">Qty</div>
+          <div className="font-bold text-sm">{item.quantity}</div>
+        </div>
+        <div className="bg-slate-50 dark:bg-slate-700/50 rounded-lg p-1.5">
+          <div className="text-xs text-slate-400">Harga</div>
+          <div className="font-bold text-sm">${item.unitPrice}</div>
+        </div>
+        <div className="bg-slate-50 dark:bg-slate-700/50 rounded-lg p-1.5">
+          <div className="text-xs text-slate-400">Nilai</div>
+          <div className="font-bold text-sm">{formatCurrency(item.quantity*item.unitPrice)}</div>
+        </div>
+      </div>
+
+      <div className="mb-2">
+        <div className="flex justify-between text-xs mb-0.5">
+          <span className="text-slate-400">Fill Level</span>
+          <span className="font-medium">{item.fillLevel}%</span>
+        </div>
+        <div className="h-1.5 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden">
+          <div className={`h-full ${fillColor} rounded-full transition-all duration-700`}
+            style={{ width:`${item.fillLevel}%`, animationDelay:`${idx*40}ms` }}/>
+        </div>
+      </div>
+
+      {daysLeft !== null && (
+        <div className={`text-xs mb-2 ${daysLeft<=3?'text-red-500':daysLeft<=7?'text-amber-500':'text-slate-400'}`}>
+          {daysLeft<=3?'🔴':daysLeft<=7?'🟡':'🟢'} {daysLeft} hari hingga expired
+        </div>
+      )}
+
+      <div className="flex gap-2">
+        <button onClick={()=>onEdit(item)} className="btn btn-secondary flex-1 text-xs py-1">✏️ Edit</button>
+        <button onClick={()=>onDelete(item._id)}
+          className="btn text-xs py-1 px-2 bg-red-50 text-red-600 border-red-100 hover:bg-red-100 dark:bg-red-900/20 dark:border-red-800 dark:text-red-400">
+          🗑️
+        </button>
+      </div>
+    </div>
+  )
+}
 
 export default function InventoryTracking() {
-  const [items, setItems] = useState<InventoryItem[]>([])
+  const [items, setItems]     = useState<InventoryItem[]>([])
   const [loading, setLoading] = useState(true)
-  const [search, setSearch] = useState('')
-  const [catFilter, setCatFilter] = useState('')
-  const [statusFilter, setStatusFilter] = useState('all')
-  const [modal, setModal] = useState<'add'|'edit'|null>(null)
-  const [editing, setEditing] = useState<InventoryItem|null>(null)
-  const [form, setForm] = useState({ ...EMPTY_FORM })
-  const [saving, setSaving] = useState(false)
-  const [deleting, setDeleting] = useState(false)
+  const [saving, setSaving]   = useState(false)
+  const [modal, setModal]     = useState(false)
+  const [editItem, setEditItem] = useState<InventoryItem|null>(null)
+  const [form, setForm]       = useState(EMPTY_FORM)
+  const [search, setSearch]   = useState('')
+  const [filterStatus, setFilterStatus] = useState('')
+  const [filterCat, setFilterCat]       = useState('')
 
   const fetchItems = useCallback(async () => {
     setLoading(true)
     try {
-      const params: Record<string,string> = {}
-      if (statusFilter !== 'all') params.status = statusFilter
-      if (catFilter) params.category = catFilter
-      if (search) params.search = search
-      const res = await getInventory(params)
-      setItems(res.data.data || [])
-    } catch {
-      toast.error('Failed to load inventory')
-    } finally {
-      setLoading(false)
-    }
-  }, [statusFilter, catFilter, search])
+      const p: any = {}
+      if (search)       p.search   = search
+      if (filterStatus) p.status   = filterStatus
+      if (filterCat)    p.category = filterCat
+      const res = await getInventory(p)
+      setItems(res.data.data||[])
+    } catch { toast.error('Gagal memuat inventory') }
+    finally { setLoading(false) }
+  }, [search, filterStatus, filterCat])
 
   useEffect(() => { fetchItems() }, [fetchItems])
 
-  const openAdd = () => { setForm({ ...EMPTY_FORM }); setEditing(null); setModal('add') }
+  const openAdd = () => { setEditItem(null); setForm(EMPTY_FORM); setModal(true) }
   const openEdit = (item: InventoryItem) => {
-    setForm({ name:item.name, category:item.category, zone:item.zone, shelf:item.shelf, quantity:String(item.quantity), unitPrice:String(item.unitPrice), fillLevel:String(item.fillLevel), rfid:item.rfid })
-    setEditing(item); setModal('edit')
+    setEditItem(item)
+    setForm({
+      name:item.name, rfid:item.rfid, category:item.category,
+      zone:item.zone, shelf:item.shelf||'1', quantity:item.quantity,
+      unitPrice:item.unitPrice, fillLevel:item.fillLevel, unit:item.unit||'pcs',
+      expiryDate:item.expiryDate?new Date(item.expiryDate).toISOString().split('T')[0]:'',
+      supplierId:item.supplierId||'',
+    })
+    setModal(true)
   }
-
+  const handleDelete = async (id:string) => {
+    if (!confirm('Hapus item ini?')) return
+    try {
+      await deleteInventoryItem(id)
+      setItems(p=>p.filter(i=>i._id!==id))
+      toast.success('Item dihapus!')
+    } catch { toast.error('Gagal menghapus') }
+  }
   const handleSave = async () => {
-    if (!form.name.trim()) { toast.error('Item name is required'); return }
-    if (!form.rfid.trim()) { toast.error('RFID tag is required'); return }
+    if (!form.name||!form.rfid) { toast.error('Nama dan RFID wajib diisi'); return }
     setSaving(true)
-    const fill = Number(form.fillLevel) || 80
-    const payload = { ...form, quantity: Number(form.quantity)||0, unitPrice: Number(form.unitPrice)||0, fillLevel: fill, status: fill>=60?'optimal':fill>=20?'low_stock':'critical' }
     try {
-      if (editing) {
-        const res = await updateInventoryItem(editing._id, payload)
-        setItems(prev => prev.map(i => i._id === editing._id ? res.data.data : i))
-        toast.success('Item updated!')
+      if (editItem) {
+        const res = await updateInventoryItem(editItem._id, form)
+        setItems(p=>p.map(i=>i._id===editItem._id?res.data.data:i))
+        toast.success('Item diperbarui!')
       } else {
-        const res = await createInventoryItem(payload)
-        setItems(prev => [res.data.data, ...prev])
-        toast.success(`${form.name} added!`)
+        const res = await createInventoryItem(form)
+        setItems(p=>[res.data.data,...p])
+        toast.success('Item ditambahkan!')
       }
-      setModal(null)
-    } catch { } finally { setSaving(false) }
+      setModal(false)
+    } catch(e:any) {
+      toast.error(e.response?.data?.error||'Gagal menyimpan')
+    } finally { setSaving(false) }
   }
 
-  const handleDelete = async () => {
-    if (!editing) return
-    setDeleting(true)
-    try {
-      await deleteInventoryItem(editing._id)
-      setItems(prev => prev.filter(i => i._id !== editing._id))
-      toast.success(`${editing.name} deleted`)
-      setModal(null)
-    } catch { } finally { setDeleting(false) }
-  }
-
-  const filtered = items.filter(i => {
-    if (statusFilter !== 'all' && i.status !== statusFilter) return false
-    if (catFilter && i.category !== catFilter) return false
-    const q = search.toLowerCase()
-    return !q || i.name.toLowerCase().includes(q) || i.rfid.toLowerCase().includes(q) || i.zone.toLowerCase().includes(q)
-  })
+  const field = (k:string,v:any) => setForm(p=>({...p,[k]:v}))
 
   return (
     <div>
-      <div className="flex items-start justify-between mb-5">
+      <div className="flex items-start justify-between mb-5 animate-fade-in">
         <div>
-          <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Real-time Inventory Tracking</h2>
-          <p className="text-sm text-slate-500 dark:text-slate-400">Smart shelves with IoT sensor monitoring</p>
+          <h2 className="text-lg font-semibold">Inventory Tracking</h2>
+          <p className="text-xs text-slate-400 mt-0.5">
+            {loading ? '…' : `${items.length} item`} · data milik kamu
+          </p>
         </div>
-        <div className="flex gap-2 items-center">
-          <span className="text-xs px-2 py-1 rounded-full bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400">✓ All Sensors Online</span>
-          <button onClick={openAdd} className="btn btn-success text-xs">+ Add Item</button>
-          <button onClick={fetchItems} className="btn btn-secondary text-xs">🔄</button>
-        </div>
+        <button onClick={openAdd} className="btn btn-primary text-xs">+ Tambah Item</button>
       </div>
 
-      <div className="flex gap-3 mb-3">
-        <input className="input flex-1 text-xs" placeholder="Search items, RFID, zone…" value={search} onChange={e => setSearch(e.target.value)} />
-        <select className="input w-40 text-xs" value={catFilter} onChange={e => setCatFilter(e.target.value)}>
-          <option value="">All Categories</option>
-          {CATS.map(c => <option key={c}>{c}</option>)}
+      {/* Filters */}
+      <div className="flex gap-2 mb-4 animate-fade-in-up delay-100">
+        <input className="input text-xs py-1.5 flex-1 max-w-xs"
+          placeholder="🔍 Cari nama atau RFID…"
+          value={search} onChange={e=>setSearch(e.target.value)}/>
+        <select className="input text-xs py-1.5 w-32" value={filterStatus} onChange={e=>setFilterStatus(e.target.value)}>
+          <option value="">Semua Status</option>
+          <option value="optimal">Optimal</option>
+          <option value="low_stock">Low Stock</option>
+          <option value="critical">Critical</option>
         </select>
+        <select className="input text-xs py-1.5 w-36" value={filterCat} onChange={e=>setFilterCat(e.target.value)}>
+          <option value="">Semua Kategori</option>
+          {CATS.map(c=><option key={c} value={c}>{c}</option>)}
+        </select>
+        <button onClick={fetchItems} className="btn btn-secondary text-xs">
+          {loading ? <Spinner size={12}/> : '🔄'}
+        </button>
       </div>
 
-      <div className="flex gap-2 mb-4">
-        {['all','optimal','low_stock','critical'].map(s => (
-          <button key={s} onClick={() => setStatusFilter(s)}
-            className={`text-xs px-3 py-1 rounded-full border transition-all ${statusFilter===s ? 'text-white' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-600 hover:border-slate-400'}`}
-            style={statusFilter===s ? { backgroundColor: 'var(--ac)', borderColor: 'var(--ac)' } : {}}>
-            {s==='all'?'All':s==='low_stock'?'Low Stock':s.charAt(0).toUpperCase()+s.slice(1)}
-          </button>
-        ))}
-        <span className="ml-auto text-xs text-slate-400 self-center">{filtered.length} items</span>
-      </div>
-
+      {/* Grid */}
       {loading ? (
-        <div className="grid grid-cols-3 gap-3">
-          {[...Array(6)].map((_,i) => <div key={i} className="card h-32 animate-pulse bg-slate-100 dark:bg-slate-800" />)}
-        </div>
-      ) : (
-        <div className="grid grid-cols-3 gap-3 mb-4">
-          {filtered.map(item => (
-            <div key={item._id} onClick={() => openEdit(item)} className="card cursor-pointer hover:border-blue-400 dark:hover:border-blue-500 transition-all hover:shadow-md">
-              <div className="flex justify-between items-start mb-2">
-                <div className="text-sm font-semibold text-slate-900 dark:text-slate-100 truncate pr-2">{item.name}</div>
-                <Badge className={statusBadge(item.status)} style={{ fontSize:'9px', whiteSpace:'nowrap' }}>
-                  {item.status==='low_stock'?'Low':item.status==='optimal'?'OK':'Critical'}
-                </Badge>
+        <div className="grid grid-cols-3 gap-4">
+          {[...Array(6)].map((_,i)=>(
+            <div key={i} className="card animate-fade-in" style={{animationDelay:`${i*50}ms`}}>
+              <div className="skeleton h-4 w-3/4 mb-2"/>
+              <div className="skeleton h-3 w-1/2 mb-3"/>
+              <div className="grid grid-cols-3 gap-2 mb-2">
+                {[...Array(3)].map((_,j)=><div key={j} className="skeleton h-10 rounded-lg"/>)}
               </div>
-              <div className="space-y-1 text-xs text-slate-500 dark:text-slate-400 mb-2">
-                <div>📍 Zone {item.zone}, Shelf {item.shelf}</div>
-                <div>⚖️ {item.weight}kg · {item.quantity} {item.unit}</div>
-                <div>🏷️ {item.rfid}</div>
+              <div className="skeleton h-1.5 w-full rounded-full mb-3"/>
+              <div className="flex gap-2">
+                <div className="skeleton h-7 flex-1 rounded-lg"/>
+                <div className="skeleton h-7 w-10 rounded-lg"/>
               </div>
-              <FillBar value={item.fillLevel} />
             </div>
           ))}
-          {!filtered.length && (
-            <div className="col-span-3 text-center py-16 text-slate-400">
-              <div className="text-3xl mb-2">📦</div>
-              <div className="text-sm">No items found</div>
-              <button onClick={openAdd} className="btn btn-primary text-xs mt-3">+ Add First Item</button>
-            </div>
-          )}
+        </div>
+      ) : items.length === 0 ? (
+        <div className="card text-center py-16 animate-fade-in-scale">
+          <div className="text-5xl mb-4">📦</div>
+          <div className="font-medium text-slate-600 dark:text-slate-300">Belum ada item inventory</div>
+          <div className="text-xs text-slate-400 mt-1 mb-4">Tambahkan item baru atau import dari Excel/CSV</div>
+          <button onClick={openAdd} className="btn btn-primary text-xs mx-auto">+ Tambah Item Pertama</button>
+        </div>
+      ) : (
+        <div className="grid grid-cols-3 gap-4">
+          {items.map((item,i)=>(
+            <ItemCard key={item._id} item={item} onEdit={openEdit} onDelete={handleDelete} idx={i}/>
+          ))}
         </div>
       )}
 
-      <div className="card">
-        <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100 mb-3">IoT Sensor Network</h3>
-        <div className="grid grid-cols-4 text-center gap-4">
-          {[{v:'156',l:'Active Sensors',c:'text-blue-600'},{v:'98.5%',l:'Uptime',c:'text-green-600'},{v:'2.4s',l:'Avg Response',c:'text-purple-600'},{v:'12K',l:'Updates/min',c:'text-orange-500'}].map(s => (
-            <div key={s.l}><div className={`text-2xl font-semibold ${s.c}`}>{s.v}</div><div className="text-xs text-slate-500 dark:text-slate-400">{s.l}</div></div>
-          ))}
-        </div>
-      </div>
-
-      <Modal open={modal!==null} onClose={() => setModal(null)} title={modal==='edit'?'Edit Item':'Add New Item'}>
+      {/* Modal */}
+      <Modal open={modal} onClose={()=>setModal(false)} title={editItem?'Edit Item':'Tambah Item Baru'}>
         <div className="space-y-3">
-          {[
-            {k:'name',l:'Item Name *',p:'e.g. Fresh Tomatoes'},
-            {k:'rfid',l:'RFID Tag *',p:'RFID-G001'},
-            {k:'zone',l:'Zone',p:'A'},
-            {k:'shelf',l:'Shelf',p:'1'},
-            {k:'quantity',l:'Quantity',p:'100',t:'number'},
-            {k:'unitPrice',l:'Unit Price ($)',p:'5',t:'number'},
-            {k:'fillLevel',l:'Fill Level (%)',p:'80',t:'number'},
-          ].map(f => (
-            <div key={f.k}>
-              <label className="label">{f.l}</label>
-              <input className="input text-xs" type={f.t||'text'} placeholder={f.p}
-                value={(form as any)[f.k]} onChange={e => setForm(p => ({...p,[f.k]:e.target.value}))} />
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="label">Nama Item *</label>
+              <input className="input text-xs" placeholder="Fresh Tomatoes" value={form.name} onChange={e=>field('name',e.target.value)}/>
             </div>
-          ))}
-          <div>
-            <label className="label">Category</label>
-            <select className="input text-xs" value={form.category} onChange={e => setForm(p => ({...p,category:e.target.value}))}>
-              {CATS.map(c => <option key={c}>{c}</option>)}
-            </select>
+            <div>
+              <label className="label">RFID/SKU *</label>
+              <input className="input text-xs" placeholder="RFID-A001" value={form.rfid} onChange={e=>field('rfid',e.target.value)}/>
+            </div>
           </div>
-        </div>
-        <div className="flex gap-2 mt-4">
-          {modal==='edit' && <button onClick={handleDelete} disabled={deleting} className="btn btn-danger text-xs flex-1 disabled:opacity-60">{deleting?'Deleting…':'Delete'}</button>}
-          <button onClick={() => setModal(null)} className="btn btn-secondary text-xs flex-1">Cancel</button>
-          <button onClick={handleSave} disabled={saving} className="btn btn-primary text-xs flex-1 disabled:opacity-60">{saving?'Saving…':'Save'}</button>
+          <div className="grid grid-cols-3 gap-3">
+            <div>
+              <label className="label">Kategori</label>
+              <select className="input text-xs" value={form.category} onChange={e=>field('category',e.target.value)}>
+                {CATS.map(c=><option key={c}>{c}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="label">Zone</label>
+              <select className="input text-xs" value={form.zone} onChange={e=>field('zone',e.target.value)}>
+                {ZONES.map(z=><option key={z}>Zone {z}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="label">Shelf</label>
+              <input className="input text-xs" placeholder="1" value={form.shelf} onChange={e=>field('shelf',e.target.value)}/>
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            <div>
+              <label className="label">Quantity</label>
+              <input type="number" className="input text-xs" value={form.quantity} onChange={e=>field('quantity',Number(e.target.value))}/>
+            </div>
+            <div>
+              <label className="label">Unit Price ($)</label>
+              <input type="number" step="0.01" className="input text-xs" value={form.unitPrice} onChange={e=>field('unitPrice',Number(e.target.value))}/>
+            </div>
+            <div>
+              <label className="label">Unit</label>
+              <input className="input text-xs" placeholder="pcs" value={form.unit} onChange={e=>field('unit',e.target.value)}/>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="label">Fill Level: {form.fillLevel}%</label>
+              <input type="range" min={0} max={100} className="w-full accent-blue-500" value={form.fillLevel}
+                onChange={e=>field('fillLevel',Number(e.target.value))}/>
+            </div>
+            <div>
+              <label className="label">Expiry Date</label>
+              <input type="date" className="input text-xs" value={form.expiryDate} onChange={e=>field('expiryDate',e.target.value)}/>
+            </div>
+          </div>
+          <div className="flex gap-2 pt-2">
+            <button onClick={()=>setModal(false)} className="btn btn-secondary flex-1 text-xs">Batal</button>
+            <button onClick={handleSave} disabled={saving} className="btn btn-primary flex-1 text-xs disabled:opacity-60">
+              {saving ? <><Spinner size={12}/> Menyimpan…</> : editItem ? 'Simpan Perubahan' : 'Tambah Item'}
+            </button>
+          </div>
         </div>
       </Modal>
     </div>

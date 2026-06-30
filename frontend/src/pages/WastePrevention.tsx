@@ -76,7 +76,7 @@ export default function WastePrevention() {
 
   return (
     <div>
-      <div className="flex items-start justify-between mb-5">
+      <div className="flex items-start justify-between mb-5 animate-fade-in">
         <div>
           <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Waste Prevention</h2>
           <p className="text-sm text-slate-500 dark:text-slate-400">Item inventori kamu yang mendekati kadaluarsa</p>
@@ -110,7 +110,7 @@ export default function WastePrevention() {
 
       {loading ? (
         <div className="grid grid-cols-2 gap-4">
-          {[...Array(4)].map((_,i) => <div key={i} className="card animate-pulse h-36" />)}
+          {[...Array(4)].map((_,i) => <div key={i} className="card skeleton h-36" />)}
         </div>
       ) : items.length === 0 ? (
         <div className="card text-center py-12">

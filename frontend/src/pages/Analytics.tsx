@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { getAnalytics, getIoTSensors } from '../lib/api'
+import { Spinner } from '../components/ui/PageLoader'
 import toast from 'react-hot-toast'
 
 const ratingBadge = (r: string) =>
@@ -104,7 +105,7 @@ export default function Analytics() {
         {/* Waste by Category - data real dari MongoDB user */}
         <div className="card">
           <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100 mb-3">Waste by Category</h3>
-          {loading ? <div className="h-44 animate-pulse bg-slate-100 dark:bg-slate-800 rounded-lg" /> : (
+          {loading ? <div className="h-44 skeleton rounded-lg" /> : (
             data?.wasteByCategory?.length > 0 ? (
               <ResponsiveContainer width="100%" height={180}>
                 <BarChart data={data.wasteByCategory} layout="vertical">
@@ -126,7 +127,7 @@ export default function Analytics() {
         {/* Turnover rate - data real */}
         <div className="card">
           <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100 mb-3">Stock Turnover Rate</h3>
-          {loading ? <div className="h-44 animate-pulse bg-slate-100 dark:bg-slate-800 rounded-lg" /> : (
+          {loading ? <div className="h-44 skeleton rounded-lg" /> : (
             data?.turnoverRates?.length > 0 ? (
               <div className="space-y-2.5">
                 {data.turnoverRates.map((t: any) => (
@@ -174,7 +175,7 @@ export default function Analytics() {
           </h3>
           <span className="text-xs text-slate-400">Data dari sensor IoT kamu</span>
         </div>
-        {loading ? <div className="h-36 animate-pulse bg-slate-100 dark:bg-slate-800 rounded-lg" /> : (
+        {loading ? <div className="h-36 skeleton rounded-lg" /> : (
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead>

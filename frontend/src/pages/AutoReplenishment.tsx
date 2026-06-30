@@ -92,7 +92,7 @@ export default function AutoReplenishment() {
 
   return (
     <div>
-      <div className="flex items-start justify-between mb-5">
+      <div className="flex items-start justify-between mb-5 animate-fade-in">
         <div>
           <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Auto Replenishment</h2>
           <p className="text-sm text-slate-500 dark:text-slate-400">Saran replenishment berdasarkan stok inventori kamu</p>
@@ -147,7 +147,7 @@ export default function AutoReplenishment() {
             Replenishment Suggestions ({orders.length})
           </h3>
           {loading ? (
-            [...Array(3)].map((_,i) => <div key={i} className="card animate-pulse h-28 mb-3" />)
+            [...Array(3)].map((_,i) => <div key={i} className="card skeleton h-28 mb-3" />)
           ) : orders.length === 0 ? (
             <div className="card text-center py-10">
               <div className="text-3xl mb-2">✅</div>
@@ -196,7 +196,7 @@ export default function AutoReplenishment() {
             Suppliers ({suppliers.length})
           </h3>
           {loading ? (
-            [...Array(3)].map((_,i) => <div key={i} className="card animate-pulse h-20 mb-3" />)
+            [...Array(3)].map((_,i) => <div key={i} className="card skeleton h-20 mb-3" />)
           ) : suppliers.length === 0 ? (
             <div className="card text-center py-8">
               <div className="text-sm text-slate-400">Belum ada supplier — tambahkan supplier baru</div>

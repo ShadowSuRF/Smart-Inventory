@@ -42,6 +42,9 @@ export const getInventory = (params?: Record<string, string>) => api.get('/inven
 export const createInventoryItem = (data: unknown) => api.post('/inventory', data)
 export const updateInventoryItem = (id: string, data: unknown) => api.put(`/inventory/${id}`, data)
 export const deleteInventoryItem = (id: string) => api.delete(`/inventory/${id}`)
+export const importInventoryFile = (formData: FormData) =>
+  api.post('/inventory/import', formData, { headers: { 'Content-Type': 'multipart/form-data' } })
+export const getImportLogs = () => api.get('/inventory/import/logs')
 export const importInventoryExcel = (formData: FormData) =>
   api.post('/inventory/import', formData, { headers: { 'Content-Type': 'multipart/form-data' } })
 

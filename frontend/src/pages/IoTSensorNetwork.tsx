@@ -126,7 +126,7 @@ export default function IoTSensorNetwork() {
 
   return (
     <div>
-      <div className="flex items-start justify-between mb-5">
+      <div className="flex items-start justify-between mb-5 animate-fade-in">
         <div>
           <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">IoT Sensor Network</h2>
           <p className="text-sm text-slate-500 dark:text-slate-400">
@@ -200,7 +200,7 @@ export default function IoTSensorNetwork() {
       {/* Sensor Grid */}
       {loading ? (
         <div className="grid grid-cols-3 gap-3 mb-5">
-          {[...Array(6)].map((_, i) => <div key={i} className="card h-36 animate-pulse bg-slate-100 dark:bg-slate-800" />)}
+          {[...Array(6)].map((_, i) => <div key={i} className="card h-36 skeleton" />)}
         </div>
       ) : (
         <div className="grid grid-cols-3 gap-3 mb-5">

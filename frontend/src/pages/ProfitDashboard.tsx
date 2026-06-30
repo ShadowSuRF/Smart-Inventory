@@ -5,6 +5,7 @@ import {
   ReferenceLine,
 } from 'recharts'
 import api from '../lib/api'
+import { Spinner } from '../components/ui/PageLoader'
 import toast from 'react-hot-toast'
 
 const fmt = (v: number) =>
@@ -117,7 +118,7 @@ export default function ProfitDashboard() {
   return (
     <div>
       {/* Header */}
-      <div className="flex items-start justify-between mb-5">
+      <div className="flex items-start justify-between mb-5 animate-fade-in">
         <div>
           <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Profit & Loss Dashboard</h2>
           <p className="text-sm text-slate-500 dark:text-slate-400">
@@ -197,7 +198,7 @@ export default function ProfitDashboard() {
       <div className="grid grid-cols-2 gap-4 mb-4">
         <div className="card">
           <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100 mb-3">Revenue vs Cost Structure</h3>
-          {loading ? <div className="h-44 animate-pulse bg-slate-100 dark:bg-slate-800 rounded-lg" /> : (
+          {loading ? <div className="skeleton h-44 w-full rounded-lg" /> : (
             <ResponsiveContainer width="100%" height={180}>
               <AreaChart data={filteredMonthly}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
@@ -216,7 +217,7 @@ export default function ProfitDashboard() {
         {/* Pie chart by category */}
         <div className="card">
           <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100 mb-3">Net Profit by Category</h3>
-          {loading ? <div className="h-44 animate-pulse bg-slate-100 dark:bg-slate-800 rounded-lg" /> : (
+          {loading ? <div className="skeleton h-44 w-full rounded-lg" /> : (
             <div className="flex items-center gap-2">
               <ResponsiveContainer width="55%" height={180}>
                 <PieChart>

@@ -142,7 +142,7 @@ export default function AIForecasting() {
         </div>
 
         {loading ? (
-          <div className="h-48 animate-pulse bg-slate-100 dark:bg-slate-800 rounded-lg" />
+          <div className="h-48 skeleton rounded-lg" />
         ) : isEmpty ? (
           <div className="h-48 flex flex-col items-center justify-center text-slate-400">
             <div className="text-4xl mb-3">📦</div>
@@ -191,7 +191,7 @@ export default function AIForecasting() {
           Forecast per Kategori (Inventory Kamu)
         </h3>
         {loading ? (
-          <div className="h-44 animate-pulse bg-slate-100 dark:bg-slate-800 rounded-lg" />
+          <div className="h-44 skeleton rounded-lg" />
         ) : catData.length === 0 ? (
           <div className="h-44 flex flex-col items-center justify-center text-slate-400">
             <div className="text-3xl mb-2">📂</div>
