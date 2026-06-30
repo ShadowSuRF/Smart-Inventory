@@ -161,6 +161,50 @@ const IoTSensorStateSchema = new Schema<IIoTSensorState>({
 // compound unique: sensorId unik per user
 IoTSensorStateSchema.index({ userId: 1, sensorId: 1 }, { unique: true })
 export const IoTSensorState = mongoose.model<IIoTSensorState>('IoTSensorState', IoTSensorStateSchema)
+// NOTE: legacy — dulu nyimpen state dari SENSOR_CONFIGS global yang sama utk semua user.
+// Sudah digantikan IoTDevice (di bawah) yang beneran milik & di-setup oleh masing² user.
+// Model dibiarin ada (jaga² ada data lama) tapi routes/iot.ts udah gak pakai ini lagi.
+
+// ── IoTDevice — sensor/alat IoT BENERAN milik & di-setup oleh user ────
+// Ini yang menggantikan SENSOR_CONFIGS hardcoded. Tiap user nambah device-nya
+// sendiri (nama, zone/lokasi, tipe, threshold) lewat popup "Tambah Sensor".
+export interface IIoTDevice extends Document {
+  userId: Types.ObjectId
+  deviceId: string                 // generated, unik per user (mis. "SEN-A001")
+  name: string                     // nama bebas dari user
+  zone: string                     // lokasi/zone pilihan user sendiri
+  type: string                     // weight+temp | temp+humidity | rfid+weight | dll
+  tempMin: number; tempMax: number // threshold suhu — bisa diset user
+  humMin: number; humMax: number   // threshold humidity — bisa diset user
+  mqttTopic: string                // smart-inventory/{userId}/{deviceId} — private per user
+  temperature: number; humidity: number; weight: number
+  batteryLevel: number
+  status: 'online' | 'offline' | 'warning'
+  source: 'simulated' | 'mqtt'     // reading terakhir dari simulate atau MQTT beneran
+  lastSeen: Date
+}
+const IoTDeviceSchema = new Schema<IIoTDevice>({
+  userId:      { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+  deviceId:    { type: String, required: true },
+  name:        { type: String, required: true, trim: true },
+  zone:        { type: String, required: true, trim: true },
+  type:        { type: String, default: 'temp+humidity' },
+  tempMin:     { type: Number, default: 2 },
+  tempMax:     { type: Number, default: 8 },
+  humMin:      { type: Number, default: 60 },
+  humMax:      { type: Number, default: 85 },
+  mqttTopic:   { type: String, required: true },
+  temperature: { type: Number, default: 4 },
+  humidity:    { type: Number, default: 60 },
+  weight:      { type: Number, default: 0 },
+  batteryLevel:{ type: Number, default: 100 },
+  status:      { type: String, enum: ['online','offline','warning'], default: 'online' },
+  source:      { type: String, enum: ['simulated','mqtt'], default: 'simulated' },
+  lastSeen:    { type: Date, default: Date.now },
+}, { timestamps: true })
+// compound unique: deviceId unik per user (bukan global lagi)
+IoTDeviceSchema.index({ userId: 1, deviceId: 1 }, { unique: true })
+export const IoTDevice = mongoose.model<IIoTDevice>('IoTDevice', IoTDeviceSchema)
 
 // ── ImportLog ─────────────────────────────────────────────────────────
 export interface IImportLog extends Document {
