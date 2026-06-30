@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import AppLogo from '../components/ui/AppLogo'
 
 const FEATURES = [
   { icon:'📦', title:'Real-Time Inventory', desc:'Track stok dengan fill level visual, filter kategori, dan CRUD lengkap. Data terisolasi per akun.' },
-  { icon:'🧠', title:'AI Demand Forecasting', desc:'Gradient Boosting 95.8% accuracy + NumPy LSTM 94.2%. Forecast 30/90/180 hari ke depan.' },
-  { icon:'📡', title:'IoT Sensor Network', desc:'14 sensor virtual di 7 zona. Monitoring suhu, kelembaban, berat secara real-time per user.' },
+  { icon:'🧠', title:'AI Demand Forecasting', desc:'Gradient Boosting 95.8% accuracy. Forecast agregat maupun per produk spesifik, 30/90/180 hari ke depan.' },
+  { icon:'📡', title:'IoT Sensor Network', desc:'Setup sensor sendiri — nama, lokasi, dan ambang batas custom. Mode simulasi atau live MQTT, privat per user.' },
   { icon:'🌱', title:'Waste Prevention', desc:'Alert produk kadaluarsa ≤7 hari. Rekomendasi AI: flash sale, bundle, donation, promotion.' },
   { icon:'🔄', title:'Auto Replenishment', desc:'Saran order otomatis dari stok kritis. Bulk order high-priority, manajemen supplier.' },
   { icon:'💰', title:'Profit & Loss', desc:'P&L bulanan interaktif. Revenue vs profit chart, waste breakdown, filter 3M/6M/12M/All.' },
@@ -12,7 +13,7 @@ const FEATURES = [
 
 const STACK = [
   'React 18','TypeScript','Node.js 20','MongoDB Atlas','Python / Flask',
-  'scikit-learn','NumPy LSTM','HiveMQ MQTT','JWT Auth','Tailwind CSS',
+  'scikit-learn','Recharts','HiveMQ MQTT','JWT Auth','Tailwind CSS',
 ]
 
 const STATS = [
@@ -108,7 +109,7 @@ export default function Landing() {
     { tier:'Presentation', items:['React 18','TypeScript','Tailwind CSS','Vite 5'], icon:'🖥️' },
     { tier:'Application',  items:['Node.js 20','Express','TypeScript','JWT Auth'], icon:'⚙️' },
     { tier:'Data',         items:['MongoDB Atlas','Mongoose','userId isolation','TTL index'], icon:'🗄️' },
-    { tier:'ML + IoT',     items:['Python Flask','GB 95.8%','NumPy LSTM','HiveMQ MQTT'], icon:'🧠' },
+    { tier:'ML + IoT',     items:['Python Flask','GB 95.8%','HiveMQ MQTT','Private MQTT/user'], icon:'🧠' },
   ]
 
   return (
@@ -119,7 +120,7 @@ export default function Landing() {
         scrolled ? 'bg-white/90 dark:bg-slate-900/90 backdrop-blur-md shadow-sm border-b border-slate-100 dark:border-slate-800' : 'bg-transparent'}`}>
         <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <span className="text-xl">🏪</span>
+            <AppLogo size={22} />
             <span className="font-semibold text-sm">Smart Inventory</span>
           </div>
           <div className="hidden md:flex items-center gap-6 text-sm text-slate-500 dark:text-slate-400">
@@ -343,7 +344,7 @@ export default function Landing() {
       {/* Footer */}
       <footer className="py-8 border-t border-slate-100 dark:border-slate-800 text-center text-xs text-slate-400">
         <div className="flex items-center justify-center gap-2 mb-1.5">
-          <span>🏪</span>
+          <AppLogo size={16} />
           <span className="font-medium text-slate-500 dark:text-slate-400">Smart Inventory and Waste Reducer</span>
         </div>
         <div>BINUS University · Enrichment Program 2026/2027 · Erick Susanto (2702277710)</div>

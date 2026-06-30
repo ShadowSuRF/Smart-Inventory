@@ -1,8 +1,9 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { logout } from '../../lib/api'
-import { isConnected } from '../../lib/mqtt'
+import { connectMQTT, isConnected } from '../../lib/mqtt'
 import { useSettings } from '../../context/SettingsContext'
+import AppLogo from '../ui/AppLogo'
 import toast from 'react-hot-toast'
 
 const NAV = [
@@ -23,9 +24,19 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate()
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [loggingOut, setLoggingOut] = useState(false)
+  const [mqttLive, setMqttLive] = useState(false)
   const { settings, setTheme } = useSettings()
 
   const user = JSON.parse(localStorage.getItem('user') || '{}')
+
+  useEffect(() => {
+    // Layout cuma di-mount setelah PrivateRoute lolos (user udah login),
+    // jadi ini tempat yang bener buat mulai connect MQTT — bukan di App.tsx
+    // yang dulu jalan duluan sebelum ada user sama sekali.
+    connectMQTT()
+    const t = setInterval(() => setMqttLive(isConnected()), 2000)
+    return () => clearInterval(t)
+  }, [])
 
   const handleLogout = async () => {
     setLoggingOut(true)
@@ -43,11 +54,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       {/* Sidebar */}
       <aside className={`${sidebarOpen ? 'w-56' : 'w-14'} flex-shrink-0 bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-700 flex flex-col transition-all duration-200`}>
         <div className="p-4 border-b border-slate-200 dark:border-slate-700 flex items-center gap-2">
-          <span className="text-xl flex-shrink-0">🏪</span>
+          <AppLogo size={sidebarOpen ? 26 : 22} className="flex-shrink-0" />
           {sidebarOpen && (
             <div className="min-w-0">
-              <div className="text-sm font-semibold truncate" style={{ color: 'var(--ac)' }}>Smart Inventory</div>
-              <div className="text-xs text-slate-400 truncate">Waste Reducer AI</div>
+              <div className="text-sm font-semibold truncate leading-tight" style={{ color: 'var(--ac)' }}>Smart Inventory</div>
+              <div className="text-xs text-slate-400 truncate">& Waste Reducer</div>
             </div>
           )}
           <button
@@ -109,9 +120,20 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       <div className="flex-1 flex flex-col overflow-hidden">
         <header className="h-12 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-700 flex items-center px-4 gap-3">
           <div className="flex-1 text-sm font-medium text-slate-600 dark:text-slate-400">{currentLabel}</div>
-          <div className={`flex items-center gap-1.5 text-xs px-2 py-1 rounded-full ${isConnected() ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400'}`}>
-            <span className={`w-1.5 h-1.5 rounded-full ${isConnected() ? 'bg-green-500' : 'bg-slate-400'}`} />
-            {isConnected() ? 'IoT Live' : 'IoT Offline'}
+          {/* IoT status — cuma tampil "Live" kalau beneran connect AND sim mode off */}
+          <div className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full border ${
+            mqttLive && !settings.iot.simMode
+              ? 'bg-green-50 text-green-700 border-green-200 dark:bg-green-900/20 dark:text-green-400 dark:border-green-800'
+              : settings.iot.simMode
+              ? 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:text-amber-400 dark:border-amber-800'
+              : 'bg-slate-100 text-slate-500 border-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:border-slate-700'
+          }`}>
+            <span className={`w-1.5 h-1.5 rounded-full ${
+              mqttLive && !settings.iot.simMode ? 'bg-green-500 animate-pulse'
+              : settings.iot.simMode ? 'bg-amber-500'
+              : 'bg-slate-400'
+            }`} />
+            {mqttLive && !settings.iot.simMode ? 'IoT Live' : settings.iot.simMode ? 'IoT Sim Mode' : 'IoT Offline'}
           </div>
           <button
             onClick={() => setTheme(settings.theme === 'dark' ? 'light' : 'dark')}

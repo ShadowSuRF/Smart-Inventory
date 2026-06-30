@@ -1,6 +1,7 @@
 import { useState, FormEvent } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { login } from '../lib/api'
+import AppLogo from '../components/ui/AppLogo'
 import toast from 'react-hot-toast'
 
 export default function Login() {
@@ -32,7 +33,7 @@ export default function Login() {
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-950 to-slate-900 flex items-center justify-center p-4">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
-          <div className="text-5xl mb-3">🏪</div>
+          <div className="flex justify-center mb-3"><AppLogo size={52} /></div>
           <h1 className="text-2xl font-bold text-white">Smart Inventory</h1>
           <p className="text-blue-300 text-sm mt-1">Waste Reducer AI — BINUS University</p>
         </div>

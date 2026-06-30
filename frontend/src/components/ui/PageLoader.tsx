@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import AppLogo from './AppLogo'
 
 interface PageLoaderProps {
   text?: string
@@ -22,8 +23,8 @@ export default function PageLoader({ text = 'Memuat…', fullscreen = false }: P
           {/* Spinner */}
           <div className="w-12 h-12 rounded-full border-4 border-slate-100 dark:border-slate-800"
             style={{ borderTopColor:'var(--ac)', animation:'spin 0.9s linear infinite' }} />
-          {/* Icon center */}
-          <span className="absolute text-xl">🏪</span>
+          {/* Logo center */}
+          <span className="absolute"><AppLogo size={22} /></span>
         </div>
         <div className="text-center">
           <div className="text-sm font-semibold text-slate-700 dark:text-slate-200">Smart Inventory</div>
