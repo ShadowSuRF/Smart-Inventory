@@ -133,13 +133,27 @@ router.get('/predictions', async (req: AuthRequest, res: Response) => {
     }))
     return res.json({
       success: true,
-      data: { predictions: mlPreds, horizon, accuracy: 94.2, mape: 5.8, source: 'ml' }
+      data: { predictions: mlPreds, horizon, accuracy: 94.2, mape: 5.8, source: 'ml',
+              inventory_count: items.length }
     })
   }
 
-  // Fallback — pakai buildUserPredictions dari inventory user
-  const predictions = buildUserPredictions(items, waste, horizon)
-  return res.json({ success: true, data: { predictions, horizon, accuracy: null, mape: null, source: 'fallback' } })
+  // Flask offline → jangan generate data sintetik apapun.
+  // Tampilkan empty state yang jelas: user sudah punya inventory tapi
+  // ML API belum dijalankan. Lebih jujur daripada menampilkan chart
+  // dari data perkiraan yang bisa menyesatkan.
+  return res.json({
+    success: true,
+    data: {
+      predictions: [],
+      horizon,
+      accuracy: null,
+      mape: null,
+      source: 'ml_offline',
+      inventory_count: items.length,
+      message: `Kamu punya ${items.length} item inventory. Jalankan Flask ML API untuk melihat forecasting: python3 ml/app.py`,
+    }
+  })
 })
 
 // ── GET /api/forecasting/category ────────────────────────────────────

@@ -34,8 +34,9 @@ export default function AIForecasting() {
   const [search, setSearch]     = useState('')
   const [categoryFilter, setCategoryFilter] = useState('ALL')
   const [demand, setDemand]     = useState<any[]>([])
-  const [forecastSource, setForecastSource] = useState<'ml'|'fallback'|null>(null)
+  const [forecastSource, setForecastSource] = useState<'ml'|'fallback'|'ml_offline'|'no_data'|null>(null)
   const [forecastAccuracy, setForecastAccuracy] = useState<number|null>(null)
+  const [forecastMessage, setForecastMessage] = useState<string|null>(null)
   const [itemMeta, setItemMeta] = useState<ItemMeta | null>(null)
   const [catData, setCatData]   = useState<any[]>([])
   const [summary, setSummary]   = useState<any[]>([])
@@ -73,16 +74,20 @@ export default function AIForecasting() {
     try {
       if (selectedItemId === 'ALL') {
         const predRes = await getForecastPredictions(horizon)
-        setDemand(predRes.data.data?.predictions || [])
-        setForecastSource(predRes.data.data?.source || null)
-        setForecastAccuracy(predRes.data.data?.accuracy ?? null)
+        const d = predRes.data.data
+        setDemand(d?.predictions || [])
+        setForecastSource(d?.source || null)
+        setForecastAccuracy(d?.accuracy ?? null)
+        setForecastMessage(d?.message || null)
         setItemMeta(null)
       } else {
         const itemRes = await getItemForecast(selectedItemId, horizon)
-        setDemand(itemRes.data.data?.predictions || [])
-        setForecastSource(itemRes.data.data?.source || null)
-        setForecastAccuracy(itemRes.data.data?.accuracy ?? null)
-        setItemMeta(itemRes.data.data)
+        const d = itemRes.data.data
+        setDemand(d?.predictions || [])
+        setForecastSource(d?.source || null)
+        setForecastAccuracy(d?.accuracy ?? null)
+        setForecastMessage(d?.message || null)
+        setItemMeta(d)
       }
     } catch {
       toast.error('Gagal memuat forecast produk ini')
@@ -115,7 +120,6 @@ export default function AIForecasting() {
     document.getElementById('forecast-chart-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
 
-  const isEmpty   = !chartLoading && demand.length === 0
   const hasActual = demand.some((d: any) => d.actual != null)
   const selectedName = selectedItemId === 'ALL' ? null : items.find(i => i._id === selectedItemId)?.name
   const categories = Array.from(new Set(items.map(i => i.category))).sort()
@@ -273,7 +277,7 @@ export default function AIForecasting() {
           </div>
         </div>
 
-        {/* Banner: jelas kalo lagi pakai estimasi bukan ML beneran */}
+        {/* Banner: ML offline — tampil HANYA jika ada fallback data lama, bukan ml_offline */}
         {forecastSource === 'fallback' && (
           <div className="mb-4 p-3 rounded-lg bg-amber-50 border border-amber-200 dark:bg-amber-900/20 dark:border-amber-800 flex items-start gap-2">
             <span className="text-amber-500 mt-0.5 flex-shrink-0">⚠</span>
@@ -311,11 +315,40 @@ export default function AIForecasting() {
 
         {chartLoading ? (
           <div className="h-48 skeleton rounded-lg" />
-        ) : isEmpty ? (
-          <div className="h-48 flex flex-col items-center justify-center text-slate-400">
-            <div className="text-4xl mb-3">📦</div>
+        ) : forecastSource === 'no_data' || (demand.length === 0 && !forecastSource) ? (
+          /* ── State 1: Belum ada inventory sama sekali ── */
+          <div className="h-48 flex flex-col items-center justify-center text-slate-400 gap-2">
+            <div className="text-4xl">📦</div>
             <div className="text-sm font-medium text-slate-600 dark:text-slate-300">Belum ada data inventory</div>
-            <div className="text-xs mt-1">Tambahkan item inventory untuk melihat demand forecast</div>
+            <div className="text-xs text-center max-w-xs">
+              Tambahkan item manual di menu <strong>Inventory</strong> atau import file CSV/Excel via menu <strong>Excel Import</strong> dulu
+            </div>
+            <div className="flex gap-2 mt-1">
+              <a href="/inventory"    className="btn btn-primary text-xs py-1">+ Tambah Manual</a>
+              <a href="/excel-import" className="btn btn-secondary text-xs py-1">📥 Import Excel</a>
+            </div>
+          </div>
+        ) : forecastSource === 'ml_offline' ? (
+          /* ── State 2: Ada inventory tapi Flask belum jalan ── */
+          <div className="h-48 flex flex-col items-center justify-center gap-2">
+            <div className="text-4xl">🧠</div>
+            <div className="text-sm font-medium text-slate-700 dark:text-slate-200">
+              ML API belum dijalankan
+            </div>
+            <div className="text-xs text-slate-500 dark:text-slate-400 text-center max-w-sm">
+              {forecastMessage || 'Kamu sudah punya inventory. Jalankan Flask API untuk melihat forecasting.'}
+            </div>
+            <div className="mt-2 px-4 py-2 bg-slate-100 dark:bg-slate-800 rounded-lg font-mono text-xs text-slate-600 dark:text-slate-300">
+              python3 ml/app.py
+            </div>
+            <div className="text-xs text-slate-400 mt-1">
+              Setelah jalan, klik 🔄 Refresh atau ▶ Run Model
+            </div>
+          </div>
+        ) : demand.length === 0 ? (
+          /* ── State 3: ML jalan tapi prediksi kosong ── */
+          <div className="h-48 flex items-center justify-center text-slate-400 text-sm">
+            Tidak ada data prediksi. Coba klik ▶ Run Model untuk generate forecasting.
           </div>
         ) : tab === 'demand' ? (
           <ResponsiveContainer width="100%" height={220}>
