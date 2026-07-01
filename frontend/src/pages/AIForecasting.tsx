@@ -138,7 +138,7 @@ export default function AIForecasting() {
           <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">AI Demand Forecasting</h2>
           <p className="text-sm text-slate-500 dark:text-slate-400">
             {mlStats
-              ? `${mlStats.model_type} · ${(mlStats.training_rows||31850).toLocaleString()} training rows · ${mlStats.n_features||33} fitur`
+              ? `${mlStats.model_type} · ${mlStats.training_rows ? mlStats.training_rows.toLocaleString() + ' training rows' : 'belum training'} · ${mlStats.n_features || 33} fitur`
               : 'Memuat info model…'}
           </p>
         </div>
@@ -164,30 +164,66 @@ export default function AIForecasting() {
         </div>
       </div>
 
-      {/* KPI — dari ML stats, bukan hardcode */}
+      {/* Data source warning — tampil kalau masih pakai global CSV */}
+      {mlStats?.data_source === 'global_csv' && items.length > 0 && (
+        <div className="mb-4 p-3 rounded-lg bg-amber-50 border border-amber-200 dark:bg-amber-900/20 dark:border-amber-800 flex items-start gap-2">
+          <span className="text-amber-500 flex-shrink-0 mt-0.5">⚠</span>
+          <div className="text-xs text-amber-700 dark:text-amber-400 flex-1">
+            <strong>Model masih ditraining dari data global</strong> — bukan dari inventory kamu.
+            Klik <strong>"▶ Run Model"</strong> di bawah untuk melatih ulang model menggunakan {items.length} produk yang sudah kamu input.
+            Setelah retrain, accuracy dan prediksi akan mencerminkan pola dari data kamu sendiri.
+          </div>
+        </div>
+      )}
+      {mlStats?.data_source === 'user_inventory' && (
+        <div className="mb-4 p-3 rounded-lg bg-green-50 border border-green-200 dark:bg-green-900/20 dark:border-green-800 flex items-center gap-2">
+          <span className="text-green-500">✅</span>
+          <div className="text-xs text-green-700 dark:text-green-400">
+            Model sudah ditraining dari <strong>{mlStats.data_label}</strong>. Forecasting menggunakan pola dari data inventorimu sendiri.
+          </div>
+        </div>
+      )}
+
+      {/* KPI */}
       <div className="grid grid-cols-4 gap-4 mb-5">
+        {/* Accuracy — baca dari mlStats, bukan tunggu chart load */}
         <div className="kpi-card">
           <div className="text-xs text-slate-500 dark:text-slate-400">Forecast Accuracy</div>
-          <div className={`text-2xl font-semibold ${forecastAccuracy != null ? 'text-green-600' : 'text-slate-400'}`}>
-            {forecastAccuracy != null ? `${forecastAccuracy}%` : '—'}
+          <div className={`text-2xl font-semibold ${
+            mlStats?.demand_accuracy != null ? 'text-green-600' : 'text-slate-400'
+          }`}>
+            {mlStats?.demand_accuracy != null ? `${mlStats.demand_accuracy}%` : '—'}
           </div>
           <div className="text-xs text-slate-400">
-            {forecastSource === 'ml' ? `MAPE ${mlStats?.demand_mape ?? '?'}%` :
-             forecastSource === 'fallback' ? 'Estimasi (start ML API dulu)' : 'Memuat…'}
+            {mlStats?.demand_accuracy != null
+              ? `MAPE ${mlStats.demand_mape ?? '?'}% · ${mlStats.online ? 'Live' : 'Cached'}`
+              : mlStats ? 'Belum ada data training' : 'Memuat…'}
           </div>
         </div>
+
+        {/* Training Rows — jujur soal sumber data, tidak hardcode 31850 */}
         <div className="kpi-card">
           <div className="text-xs text-slate-500 dark:text-slate-400">Training Rows</div>
-          <div className="text-2xl font-semibold text-blue-600">
-            {mlStats ? (mlStats.training_rows||31850).toLocaleString() : '—'}
+          <div className={`text-2xl font-semibold ${
+            mlStats?.training_rows ? 'text-blue-600' : 'text-slate-400'
+          }`}>
+            {mlStats?.training_rows ? mlStats.training_rows.toLocaleString() : '—'}
           </div>
-          <div className="text-xs text-slate-400">{mlStats?.training_period ?? '—'}</div>
+          <div className="text-xs text-slate-400 leading-tight mt-0.5">
+            {mlStats?.data_source === 'user_inventory'
+              ? <span className="text-green-600 font-medium">✓ Dari inventory kamu</span>
+              : mlStats?.data_source === 'global_csv'
+              ? <span className="text-amber-600">⚠ Data global (bukan data kamu)</span>
+              : mlStats ? 'Data training' : '—'}
+          </div>
         </div>
+
         <div className="kpi-card">
           <div className="text-xs text-slate-500 dark:text-slate-400">Prediction Range</div>
           <div className="text-2xl font-semibold text-blue-600">{horizon} Days</div>
           <div className="text-xs text-slate-400">Forward looking window</div>
         </div>
+
         <div className="kpi-card">
           <div className="text-xs text-slate-500 dark:text-slate-400">Model</div>
           <div className="text-sm font-semibold text-purple-600 mt-1 leading-tight">

@@ -216,6 +216,10 @@ def train_gb_models(csv_path: str = CSV_PATH, make_plots: bool = False, compare:
         'trained_at':      time.strftime('%Y-%m-%d %H:%M:%S'),
         'training_rows':   len(X),
         'n_features':      len(FEATURES),
+        # data_source: 'global_csv' = dari inventory_dummy_10k.csv (data training bawaan)
+        # 'user_inventory' = diisi oleh _generate_training_csv_from_inventory()
+        'data_source':     'global_csv',
+        'data_label':      'Data training bawaan (CSV global)',
     }
     with open(os.path.join(BASE, 'model_metrics.json'), 'w') as f:
         json.dump(metrics, f, indent=2)
@@ -743,18 +747,36 @@ def forecast_category():
 
 @app.route('/model/stats')
 def model_stats():
+    # Baca training metadata dari model_metrics.json
+    data_source  = 'global_csv'
+    data_label   = 'Data training bawaan (CSV global)'
+    training_rows = 0
+    trained_at   = None
+    metrics_path = os.path.join(BASE, 'model_metrics.json')
+    if os.path.exists(metrics_path):
+        try:
+            import json as _j
+            with open(metrics_path) as f: m = _j.load(f)
+            data_source   = m.get('data_source',  'global_csv')
+            data_label    = m.get('data_label',   'Data training bawaan')
+            training_rows = m.get('training_rows', 0)
+            trained_at    = m.get('trained_at',    None)
+        except Exception:
+            pass
+
     return jsonify({'success': True, 'data': {
-        'online': True,                                      # Flask jalan beneran
-        'model_loaded': model.loaded,
-        'model_type': 'GradientBoostingRegressor (scikit-learn)',
-        'n_estimators': getattr(model.gb_demand, 'n_estimators', 300),
-        'max_depth':    getattr(model.gb_demand, 'max_depth', 6),
-        'n_features':   getattr(model.gb_demand, 'n_features_in_', 33),
-        'training_rows': 31850, 'training_period': '2024-01 → 2026-06',
-        # accuracy bisa None kalau model belum pernah di-train dari sini
+        'online':        True,
+        'model_loaded':  model.loaded,
+        'model_type':    'GradientBoostingRegressor (scikit-learn)',
+        'n_estimators':  getattr(model.gb_demand, 'n_estimators', 300),
+        'max_depth':     getattr(model.gb_demand, 'max_depth', 6),
+        'n_features':    getattr(model.gb_demand, 'n_features_in_', 33),
+        'training_rows': training_rows,
         'demand_accuracy': model.accuracy,
-        'demand_mape': model.mape,
-        'last_trained': time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(model.last_trained)),
+        'demand_mape':   model.mape,
+        'data_source':   data_source,
+        'data_label':    data_label,
+        'trained_at':    trained_at or time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(model.last_trained)),
     }})
 
 
@@ -779,6 +801,15 @@ def retrain():
                 print(f'[ML] Retraining dari {len(inventory)} item MongoDB (user: {user_id})')
                 csv_path = _generate_training_csv_from_inventory(inventory, user_id)
                 results = train_gb_models(csv_path=csv_path, make_plots=False, compare=False)
+                # Update model_metrics.json dengan data_source = 'user_inventory'
+                import json as _json2
+                metrics_path = os.path.join(BASE, 'model_metrics.json')
+                if os.path.exists(metrics_path):
+                    with open(metrics_path) as f: m = _json2.load(f)
+                    m['data_source']  = 'user_inventory'
+                    m['data_label']   = f'Inventory kamu ({len(inventory)} produk)'
+                    m['user_id']      = user_id
+                    with open(metrics_path, 'w') as f: _json2.dump(m, f, indent=2)
                 print(f'[ML] Retrain complete ✅ demand={results["demand"]["acc"]:.1f}%')
             else:
                 # ── Retrain dari CSV lokal (default) ─────────────────────

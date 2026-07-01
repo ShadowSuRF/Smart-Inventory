@@ -426,6 +426,8 @@ router.get('/ml-stats', async (_req: Request, res: Response) => {
         training_rows:    metrics.training_rows,
         trained_at:       metrics.trained_at,
         training_period:  'Jan 2024 — Jun 2026',
+        data_source:      metrics.data_source || 'global_csv',
+        data_label:       metrics.data_label  || 'Data training bawaan',
         note:             'Flask offline — akurasi dari model_metrics.json (training terakhir)',
       }
     })
