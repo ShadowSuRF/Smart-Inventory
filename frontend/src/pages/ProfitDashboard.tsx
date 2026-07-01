@@ -150,16 +150,16 @@ export default function ProfitDashboard() {
             Belum ada data untuk ditampilkan
           </div>
           <div className="text-sm text-slate-500 dark:text-slate-400 mb-4 max-w-lg mx-auto">
-            Grafik P&L dihitung dari inventory <strong>milikmu sendiri</strong> yang tersimpan di MongoDB Atlas —
+            Grafik P&L dihitung dari inventory <strong>milikmu sendiri</strong> di MongoDB Atlas —
             bukan dari data dummy atau data training ML.
           </div>
           <div className="flex gap-3 justify-center flex-wrap text-sm">
             <a href="/inventory" className="btn btn-primary text-xs">+ Tambah Item Manual</a>
-            <a href="/inventory" className="btn btn-secondary text-xs">📥 Import Excel/CSV</a>
+            <a href="/excel-import" className="btn btn-secondary text-xs">📥 Import via Excel/CSV</a>
           </div>
           <div className="mt-4 text-xs text-slate-400 max-w-md mx-auto">
-            💡 Setelah data inventory masuk, halaman ini akan otomatis menghitung estimasi revenue,
-            COGS, waste loss, dan net profit berdasarkan harga & stok yang kamu input.
+            💡 Sudah punya file Excel/CSV? Gunakan menu <strong>Excel Import</strong> di sidebar —
+            setelah data masuk, halaman ini otomatis menghitung estimasi P&L dari harga & stok yang kamu import.
           </div>
         </div>
       )}

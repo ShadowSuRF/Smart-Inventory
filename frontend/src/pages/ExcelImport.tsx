@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { importInventoryFile, getImportLogs } from '../lib/api'
 import { Spinner } from '../components/ui/PageLoader'
 import toast from 'react-hot-toast'
@@ -6,6 +7,7 @@ import toast from 'react-hot-toast'
 interface ImportLog { _id:string; filename:string; imported:number; skipped:number; total:number; status:string; createdAt:string }
 
 export default function ExcelImport() {
+  const navigate = useNavigate()
   const [logs, setLogs]       = useState<ImportLog[]>([])
   const [logsLoading, setLogsLoading] = useState(true)
   const [uploading, setUploading]     = useState(false)
@@ -107,7 +109,7 @@ export default function ExcelImport() {
               <span className="text-green-500 text-lg">✅</span>
               <span className="font-semibold text-sm text-green-800 dark:text-green-300">Import Berhasil!</span>
             </div>
-            <div className="grid grid-cols-3 gap-3 text-center">
+            <div className="grid grid-cols-3 gap-3 text-center mb-3">
               {[
                 { label:'Total Baris', val:result.total, color:'text-slate-700 dark:text-slate-300' },
                 { label:'Tersimpan', val:result.imported, color:'text-green-600' },
@@ -120,10 +122,28 @@ export default function ExcelImport() {
               ))}
             </div>
             {result.errors?.length > 0 && (
-              <div className="mt-2 text-xs text-amber-600 dark:text-amber-400 space-y-0.5">
+              <div className="mb-3 text-xs text-amber-600 dark:text-amber-400 space-y-0.5">
                 {result.errors.slice(0,3).map((e:string,i:number)=><div key={i}>⚠ {e}</div>)}
               </div>
             )}
+            {/* Quick navigation setelah import — langsung ke menu yang relevan */}
+            <div className="border-t border-green-200 dark:border-green-800 pt-3 mt-1">
+              <div className="text-xs text-slate-500 dark:text-slate-400 mb-2">Lihat data yang baru diimport:</div>
+              <div className="flex gap-2 flex-wrap">
+                <button onClick={() => navigate('/inventory')}
+                  className="btn btn-primary text-xs py-1">
+                  📦 Lihat Inventory
+                </button>
+                <button onClick={() => navigate('/profit')}
+                  className="btn btn-secondary text-xs py-1">
+                  💰 Lihat Profit & Loss
+                </button>
+                <button onClick={() => navigate('/forecasting')}
+                  className="btn btn-secondary text-xs py-1">
+                  🧠 Lihat AI Forecasting
+                </button>
+              </div>
+            </div>
           </div>
         )}
       </div>
