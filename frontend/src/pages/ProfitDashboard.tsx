@@ -164,18 +164,6 @@ export default function ProfitDashboard() {
         </div>
       )}
 
-      {/* Estimation disclaimer — ada inventory, tapi data ini estimasi bukan transaksi real */}
-      {!loading && dataSource === 'user_data' && (
-        <div className="mb-4 p-3 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 flex items-start gap-2">
-          <span className="text-blue-500 flex-shrink-0 mt-0.5">ℹ️</span>
-          <div className="text-xs text-blue-700 dark:text-blue-400">
-            <strong>Data ini adalah estimasi</strong> berdasarkan inventory kamu di MongoDB (harga × stok).
-            Belum ada histori transaksi real — untuk data P&L yang akurat, import CSV transaksi aktual atau gunakan fitur Excel Import.
-            Kolom ML (demand forecasting) bekerja terpisah menggunakan model Gradient Boosting yang dilatih dari data training.
-          </div>
-        </div>
-      )}
-
       {/* KPI */}
       <div className="grid grid-cols-5 gap-4 mb-5">
         {[
