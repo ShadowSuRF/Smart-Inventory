@@ -59,10 +59,36 @@ async function connectDB() {
   try {
     await mongoose.connect(uri)
     console.log('[DB] MongoDB connected ✅')
+    // Auto-migrate: drop index rfid_1 global jika masih ada (bug lama)
+    await autoMigrateRfidIndex()
   } catch (err: any) {
     console.warn('[DB] MongoDB not available — some features require database')
-    console.warn('[DB] Run: brew install mongodb-community && brew services start mongodb-community')
-    console.warn('[DB] Then seed: npm run seed')
+  }
+}
+
+async function autoMigrateRfidIndex() {
+  // Index rfid_1 (global unique tanpa userId) bikin user berbeda tidak bisa
+  // punya produk dengan RFID sama. Seharusnya unik HANYA per user {userId+rfid}.
+  // Script migrate-rfid-index.ts ada tapi perlu run manual — ini versi auto.
+  try {
+    const col = mongoose.connection.db?.collection('inventoryitems')
+    if (!col) return
+    const indexes = await col.indexes()
+    const staleGlobal = indexes.filter((idx: any) =>
+      idx.key && idx.key.rfid !== undefined && !idx.key.userId && idx.name !== '_id_'
+    )
+    for (const idx of staleGlobal) {
+      await col.dropIndex(idx.name as string)
+      console.log(`[DB] Auto-migrated: dropped global index '${idx.name}' (was blocking cross-user duplicate RFID) ✅`)
+    }
+    // Pastikan compound index {userId, rfid} ada
+    const hasCompound = indexes.some((idx: any) => idx.key?.userId === 1 && idx.key?.rfid === 1)
+    if (!hasCompound) {
+      await col.createIndex({ userId: 1, rfid: 1 }, { unique: true, name: 'userId_1_rfid_1' })
+      console.log('[DB] Auto-migrated: created compound index {userId, rfid} ✅')
+    }
+  } catch (e: any) {
+    console.warn('[DB] Auto-migration skipped (non-critical):', e.message)
   }
 }
 

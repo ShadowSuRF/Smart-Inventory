@@ -760,17 +760,136 @@ def model_stats():
 
 @app.route('/model/retrain', methods=['POST'])
 def retrain():
+    """Retrain GB model.
+    Kalau ada JSON body dengan field 'inventory' (dari MongoDB user) → generate
+    training data dari inventory mereka dan retrain dari situ.
+    Kalau body kosong / tidak ada inventory → retrain dari CSV lokal (default).
+    """
+    body = request.get_json(silent=True) or {}
+    inventory = body.get('inventory', [])
+    user_id   = body.get('user_id', 'unknown')
+    source    = body.get('source', 'csv')
+
     def _do():
-        time.sleep(1)
+        import json as _json
+        time.sleep(0.5)
         try:
-            train_gb_models(make_plots=False, compare=False)
+            if inventory and len(inventory) > 0:
+                # ── Retrain dari data inventory MongoDB user ──────────────
+                print(f'[ML] Retraining dari {len(inventory)} item MongoDB (user: {user_id})')
+                csv_path = _generate_training_csv_from_inventory(inventory, user_id)
+                results = train_gb_models(csv_path=csv_path, make_plots=False, compare=False)
+                print(f'[ML] Retrain complete ✅ demand={results["demand"]["acc"]:.1f}%')
+            else:
+                # ── Retrain dari CSV lokal (default) ─────────────────────
+                print('[ML] Retraining dari CSV lokal...')
+                results = train_gb_models(make_plots=False, compare=False)
+                print(f'[ML] Retrain complete ✅ demand={results["demand"]["acc"]:.1f}%')
+
             model._load()
             model.last_trained = time.time()
-            print('[ML] Retrain complete ✅')
         except Exception as e:
             print(f'[ML] Retrain error: {e}')
+
     threading.Thread(target=_do, daemon=True).start()
-    return jsonify({'success': True, 'message': 'Retraining started', 'estimated_seconds': 150})
+    return jsonify({
+        'success': True,
+        'message': f'Retraining dimulai dari {"inventory MongoDB" if inventory else "CSV lokal"}',
+        'estimated_seconds': 150,
+        'inventory_count': len(inventory),
+    })
+
+
+def _generate_training_csv_from_inventory(inventory: list, user_id: str) -> str:
+    """Generate training CSV dari data inventory MongoDB user.
+    Karena MongoDB hanya menyimpan snapshot stok saat ini (bukan histori demand),
+    kita generate time-series sintetik yang REALISTIS berdasarkan:
+    - Harga dan kategori produk user → seasonal pattern yang sesuai
+    - Fill level dan status → estimasi demand rate
+    - Variasi per produk (noise deterministik dari nama produk)
+    """
+    import hashlib as _hash
+
+    START = datetime.date(2024, 1, 1)
+    END   = datetime.date(2026, 7, 1)
+
+    # Preset seasonal per kategori (sama dengan yang dipakai di app.py ZONE_PRESETS)
+    CAT_SEASONAL = {
+        'Fresh Produce': {'sf_amp': 0.15, 'sf_peak': 3,  'waste_rate': 0.10, 'markup': 1.3},
+        'Dairy':         {'sf_amp': 0.10, 'sf_peak': 2,  'waste_rate': 0.06, 'markup': 1.35},
+        'Beverages':     {'sf_amp': 0.25, 'sf_peak': 6,  'waste_rate': 0.02, 'markup': 1.4},
+        'Frozen':        {'sf_amp': 0.20, 'sf_peak': 7,  'waste_rate': 0.04, 'markup': 1.45},
+        'Bakery':        {'sf_amp': 0.12, 'sf_peak': 4,  'waste_rate': 0.15, 'markup': 1.35},
+        'Snacks':        {'sf_amp': 0.18, 'sf_peak': 5,  'waste_rate': 0.02, 'markup': 1.5},
+        'Prepared Foods':{'sf_amp': 0.08, 'sf_peak': 2,  'waste_rate': 0.12, 'markup': 1.3},
+    }
+    DEFAULT_CAT = {'sf_amp': 0.15, 'sf_peak': 3, 'waste_rate': 0.05, 'markup': 1.35}
+
+    rows = []
+    current = START
+    while current < END:
+        doy = current.timetuple().tm_yday
+        base_sf = 1.0 + 0.12 * np.sin(2 * np.pi * (doy - 80) / 365)
+        weekend = 1.15 if current.weekday() >= 5 else 1.0
+        payday  = 1.20 if current.day in [1,2,3,14,15,16] else 1.0
+
+        for item in inventory:
+            cat    = item.get('category', 'Snacks')
+            cfg    = CAT_SEASONAL.get(cat, DEFAULT_CAT)
+            price  = float(item.get('unit_price', 5.0))
+            cost   = price / cfg['markup']
+            qty    = max(10, int(item.get('quantity', 100)))
+            fill   = float(item.get('fill_level', 70))
+            name   = item.get('name', 'Product')
+
+            # Seed deterministik per produk → variasi noise konsisten
+            seed = int(_hash.md5(f"{user_id}{name}".encode()).hexdigest()[:8], 16)
+            rng_val = (np.sin(seed * 1.3 + doy * 2.1) + 1) / 2
+
+            # Base demand: stok rendah = banyak terjual
+            fill_factor = 1.4 if fill < 30 else 1.2 if fill < 50 else 1.0 if fill < 70 else 0.85
+            base_d = max(3, qty / 30 * fill_factor)
+
+            sf = 1.0 + cfg['sf_amp'] * np.sin(2 * np.pi * (doy - cfg['sf_peak'] * 30) / 365)
+            noise = 1.0 + (rng_val - 0.5) * 0.25
+            actual_demand = max(1, int(base_d * base_sf * sf * weekend * payday * noise))
+
+            stock = max(0, qty - actual_demand // 2)
+            fill_pct = max(10, min(100, fill + (rng_val - 0.5) * 20))
+            units_sold = min(actual_demand, stock)
+            waste_units = max(0, int(stock * cfg['waste_rate'] * noise))
+            waste_value = round(waste_units * cost, 1)
+            revenue = round(units_sold * price, 1)
+            cogs_val = round(units_sold * cost, 1)
+            gross_p = round(revenue - cogs_val, 1)
+            net_p = round(gross_p - waste_value, 1)
+
+            # Kolom harus identik dengan FEATURES di engineer_features()
+            rows.append({
+                'Date': current.isoformat(), 'SKU_Code': f'SKU-{name[:4].upper()}',
+                'RFID_Tag': f'RFID-{name[:4].upper()}', 'Product_Name': name,
+                'Category': cat, 'Zone': item.get('zone', 'A'), 'Supplier': 'User-defined',
+                'Unit_Price': price, 'Cost_Price': round(cost, 2),
+                'Base_Demand': round(base_d, 1), 'Actual_Demand': actual_demand,
+                'Units_Sold': units_sold, 'Lost_Sales': max(0, actual_demand - units_sold),
+                'Order_Qty': 0, 'Purchase_Cost': 0,
+                'Stock_Level': stock, 'Max_Stock': qty * 2, 'Fill_Level_Pct': round(fill_pct, 1),
+                'Status': 'optimal' if fill_pct >= 60 else ('low_stock' if fill_pct >= 20 else 'critical'),
+                'Waste_Units': waste_units, 'Waste_Value': waste_value,
+                'Revenue': revenue, 'COGS': cogs_val, 'Gross_Profit': gross_p, 'Net_Profit': net_p,
+                'Expiry_Date': (current + datetime.timedelta(days=14)).isoformat(), 'Shelf_Life_Days': 14,
+                'Seasonal_Factor': round(base_sf, 3), 'Weekend': 1 if current.weekday() >= 5 else 0,
+                'Month': current.month, 'DayOfWeek': current.weekday(),
+                'DayOfYear': doy,
+            })
+
+        current += datetime.timedelta(days=1)
+
+    df_out = pd.DataFrame(rows)
+    out_path = os.path.join(BASE, f'user_{user_id[:8]}_training.csv')
+    df_out.to_csv(out_path, index=False)
+    print(f'[ML] Generated {len(df_out):,} training rows from {len(inventory)} user products → {out_path}')
+    return out_path
 
 
 # ════════════════════════════════════════════════════════════════════════════

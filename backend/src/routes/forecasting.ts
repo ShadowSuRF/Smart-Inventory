@@ -389,24 +389,44 @@ router.get('/monthly-profit', async (req: AuthRequest, res: Response) => {
 })
 
 // ── GET /api/forecasting/ml-stats ────────────────────────────────────
-// Kalau Flask ML API gak jalan, return status offline yang jelas —
-// JANGAN return 95.8% hardcode seolah model beneran aktif.
 router.get('/ml-stats', async (_req: Request, res: Response) => {
+  // Coba Flask dulu (kalau jalan, return data live)
   const ml = await mlFetch('/model/stats')
   if (ml?.success) return res.json({ success: true, data: { ...ml.data, online: true } })
-  // Flask offline → info statis dari file training (metadata), akurasi null
-  res.json({
-    success: true,
-    data: {
-      online: false,           // frontend baca field ini buat tampilin status
-      model_type: 'Gradient Boosting (scikit-learn)',
-      training_rows: 31850,
-      demand_accuracy: null,   // null = belum bisa verify, Flask harus jalan dulu
-      demand_mape: null,
-      n_features: 33,
-      training_period: 'Jan 2024 — Jun 2026',
-    }
-  })
+
+  // Flask offline → baca model_metrics.json langsung dari disk.
+  // File ini disimpan setiap kali training (python3 ml/app.py train),
+  // jadi akurasi beneran tersedia walau Flask belum jalan.
+  try {
+    const metricsPath = require('path').join(__dirname, '..', '..', '..', 'ml', 'model_metrics.json')
+    const metrics = JSON.parse(require('fs').readFileSync(metricsPath, 'utf-8'))
+    return res.json({
+      success: true,
+      data: {
+        online:           false,
+        model_type:       'GradientBoostingRegressor (scikit-learn)',
+        demand_accuracy:  metrics.demand_accuracy,   // akurasi BENERAN dari training
+        demand_mape:      metrics.demand_mape,
+        profit_accuracy:  metrics.profit_accuracy,
+        n_features:       metrics.n_features || 33,
+        training_rows:    metrics.training_rows,
+        trained_at:       metrics.trained_at,
+        training_period:  'Jan 2024 — Jun 2026',
+        note:             'Flask offline — akurasi dari model_metrics.json (training terakhir)',
+      }
+    })
+  } catch {
+    // model_metrics.json belum ada (belum pernah training)
+    return res.json({
+      success: true,
+      data: {
+        online: false, demand_accuracy: null, demand_mape: null,
+        model_type: 'Gradient Boosting (scikit-learn)', n_features: 33,
+        training_rows: 0, training_period: 'Belum pernah training',
+        note: 'Jalankan: python3 ml/app.py train',
+      }
+    })
+  }
 })
 
 // ── POST /api/forecasting/predict ────────────────────────────────────
@@ -423,12 +443,57 @@ router.post('/predict', async (req: AuthRequest, res: Response) => {
 })
 
 // ── POST /api/forecasting/retrain ────────────────────────────────────
-router.post('/retrain', async (_req: Request, res: Response) => {
+// Retrain ML model menggunakan data inventory USER dari MongoDB.
+// Bukan dari dummy CSV global — data training dihasilkan dari InventoryItem
+// milik user (product, harga, kategori, stok) yang disimpan di MongoDB Atlas.
+router.post('/retrain', async (req: AuthRequest, res: Response) => {
+  const uid = req.userId!
+  const items = await InventoryItem.find({ userId: uid })
+
+  if (!items.length) {
+    return res.json({
+      success: false,
+      error: 'Belum ada inventory. Import Excel/CSV atau tambahkan item manual dulu sebelum retrain.'
+    })
+  }
+
+  // Kirim data inventory user ke Flask untuk ditraining
+  // Flask akan generate time-series dari data ini dan retrain GB model
+  const inventoryData = items.map((i: any) => ({
+    name:        i.name,
+    category:    i.category,
+    zone:        i.zone,
+    unit_price:  i.unitPrice,
+    quantity:    i.quantity,
+    fill_level:  i.fillLevel,
+    status:      i.status,
+  }))
+
   const ml = await mlFetch('/model/retrain', {
-    method: 'POST', body: '{}', headers: { 'Content-Type': 'application/json' }
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      inventory: inventoryData,
+      user_id: uid.toString(),
+      source: 'mongodb_user_inventory',
+    }),
   })
-  if (ml?.success) return res.json({ success: true, message: ml.message, estimatedTime: `${ml.estimated_seconds}s` })
-  res.json({ success: true, message: 'Retrain triggered', estimatedTime: '47s' })
+
+  if (ml?.success) {
+    return res.json({
+      success: true,
+      message: `Retraining dari ${items.length} item inventory kamu dimulai`,
+      estimatedTime: `${ml.estimated_seconds || 150}s`,
+      inventory_items: items.length,
+    })
+  }
+
+  // Flask offline — beri tahu cara jalankan manual
+  res.json({
+    success: false,
+    error: 'Flask ML API belum jalan. Jalankan: python3 ml/app.py di terminal, lalu coba lagi.',
+    hint: 'Atau: python3 ml/app.py train untuk retrain dari CSV lokal'
+  })
 })
 
 export default router
