@@ -54,7 +54,7 @@ export default function ProfitDashboard() {
   const [analytics, setAnalytics] = useState<Analytics | null>(null)
   const [loading, setLoading] = useState(true)
   const [period, setPeriod] = useState<Period>('12m')
-  const [dataSource, setDataSource] = useState<'csv'|'fallback'|null>(null)
+  const [dataSource, setDataSource] = useState<'csv'|'fallback'|'user_data'|'empty'|null>(null)
 
   const fetchAll = useCallback(async () => {
     setLoading(true)
@@ -118,8 +118,14 @@ export default function ProfitDashboard() {
             {monthly.length > 0
               ? `${monthly[0]?.ym} → ${monthly[monthly.length-1]?.ym}`
               : 'Memuat data…'}
-            {dataSource === 'csv' && <span className="badge bg-green-100 text-green-700 text-xs">Data CSV Real</span>}
-            {dataSource === 'fallback' && <span className="badge bg-amber-100 text-amber-700 text-xs">Estimasi (ML offline)</span>}
+            {dataSource === 'user_data' && (
+              <span className="badge bg-blue-100 text-blue-700 text-xs">
+                📊 Estimasi dari inventory kamu
+              </span>
+            )}
+            {dataSource === 'empty' && (
+              <span className="badge bg-slate-100 text-slate-500 text-xs">Belum ada data</span>
+            )}
           </p>
         </div>
         <div className="flex gap-2 items-center">
@@ -135,6 +141,40 @@ export default function ProfitDashboard() {
           <button onClick={fetchAll} className="btn btn-secondary text-xs">🔄</button>
         </div>
       </div>
+
+      {/* Empty state — belum ada inventory */}
+      {!loading && dataSource === 'empty' && (
+        <div className="mb-5 p-5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-center">
+          <div className="text-4xl mb-3">📊</div>
+          <div className="font-semibold text-slate-700 dark:text-slate-200 mb-1">
+            Belum ada data untuk ditampilkan
+          </div>
+          <div className="text-sm text-slate-500 dark:text-slate-400 mb-4 max-w-lg mx-auto">
+            Grafik P&L dihitung dari inventory <strong>milikmu sendiri</strong> yang tersimpan di MongoDB Atlas —
+            bukan dari data dummy atau data training ML.
+          </div>
+          <div className="flex gap-3 justify-center flex-wrap text-sm">
+            <a href="/inventory" className="btn btn-primary text-xs">+ Tambah Item Manual</a>
+            <a href="/inventory" className="btn btn-secondary text-xs">📥 Import Excel/CSV</a>
+          </div>
+          <div className="mt-4 text-xs text-slate-400 max-w-md mx-auto">
+            💡 Setelah data inventory masuk, halaman ini akan otomatis menghitung estimasi revenue,
+            COGS, waste loss, dan net profit berdasarkan harga & stok yang kamu input.
+          </div>
+        </div>
+      )}
+
+      {/* Estimation disclaimer — ada inventory, tapi data ini estimasi bukan transaksi real */}
+      {!loading && dataSource === 'user_data' && (
+        <div className="mb-4 p-3 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 flex items-start gap-2">
+          <span className="text-blue-500 flex-shrink-0 mt-0.5">ℹ️</span>
+          <div className="text-xs text-blue-700 dark:text-blue-400">
+            <strong>Data ini adalah estimasi</strong> berdasarkan inventory kamu di MongoDB (harga × stok).
+            Belum ada histori transaksi real — untuk data P&L yang akurat, import CSV transaksi aktual atau gunakan fitur Excel Import.
+            Kolom ML (demand forecasting) bekerja terpisah menggunakan model Gradient Boosting yang dilatih dari data training.
+          </div>
+        </div>
+      )}
 
       {/* KPI */}
       <div className="grid grid-cols-5 gap-4 mb-5">
