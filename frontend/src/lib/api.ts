@@ -61,7 +61,11 @@ export const applyWasteAction = (id: string, action: string, detail: string) =>
   api.post(`/waste/${id}/action`, { action, detail })
 
 export const getReplenishmentSuggestions = () => api.get('/replenishment/suggestions')
+export const getReplenishmentOrders = (status?: string) =>
+  api.get('/replenishment/orders', { params: status ? { status } : {} })
 export const createReplenishmentOrder = (data: unknown) => api.post('/replenishment/orders', data)
+export const updateReplenishmentOrder = (id: string, data: unknown) => api.put(`/replenishment/orders/${id}`, data)
+export const deleteReplenishmentOrder = (id: string) => api.delete(`/replenishment/orders/${id}`)
 export const bulkCreateOrders = (itemIds: string[]) => api.post('/replenishment/orders/bulk', { itemIds })
 export const updateOrderStatus = (id: string, status: string) => api.put(`/replenishment/orders/${id}`, { status })
 

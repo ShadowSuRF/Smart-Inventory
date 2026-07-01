@@ -84,43 +84,62 @@ router.get('/predictions', async (req: AuthRequest, res: Response) => {
     WasteItem.find({ userId: uid }),
   ])
 
-  // Kalau user punya inventory → pakai data mereka
-  if (items.length > 0) {
-    const predictions = buildUserPredictions(items, waste, horizon)
-    const totalQty   = items.reduce((s: number, i: any) => s + i.quantity, 0)
-    const totalValue = items.reduce((s: number, i: any) => s + i.quantity * i.unitPrice, 0)
-    const avgPrice   = totalQty > 0 ? (totalValue / totalQty) * 1.35 : 5
-
-    // Coba enrich dengan ML model jika tersedia
-    // (dulu query param-nya 'horizon', tapi Flask /forecast/monthly baca 'months' —
-    //  jadi horizon yg dipilih user di dropdown gak pernah nyampe ke model)
-    const months = Math.min(Math.max(Math.ceil(horizon / 30), 1), 12)
-    const ml = await mlFetch(`/forecast/monthly?months=${months}&price=${avgPrice.toFixed(2)}&base_demand=${Math.max(totalQty / 30, 1).toFixed(1)}`)
-    // NOTE: ml.data dari Flask itu LANGSUNG array [{label,total_demand,total_profit,avg_daily_demand},...],
-    // bukan {predictions:[...]} — sebelumnya `ml.data.predictions.map()` selalu throw (array gak punya
-    // properti .predictions) tiap kali Flask ML API beneran kepanggil, jadi jalur ML-nya gak pernah sukses.
-    if (ml?.success && Array.isArray(ml.data)) {
-      const mlPreds = ml.data.map((m: any) => ({
-        month:      m.label,
-        actual:     null,
-        predicted:  Math.round(m.total_demand),
-        revenue:    Math.round(m.total_demand * avgPrice),
-        net_profit: Math.round(m.total_profit),
-      }))
-      return res.json({
-        success: true,
-        // source: 'ml' → pakai Gradient Boosting beneran dari Flask
-        data: { predictions: mlPreds, horizon, accuracy: 94.2, mape: 5.8, source: 'ml' }
-      })
-    }
-
-    // Flask offline → fallback heuristik (rumus seasonal math, BUKAN model ML)
-    // accuracy: null supaya frontend gak tampilkan angka akurasi yang menyesatkan
-    return res.json({ success: true, data: { predictions, horizon, accuracy: null, mape: null, source: 'fallback' } })
+  if (!items.length) {
+    return res.json({ success: true, data: { predictions: [], horizon, accuracy: null, mape: null } })
   }
 
-  // User belum punya inventory → tampil kosong, bukan global CSV
-  return res.json({ success: true, data: { predictions: [], horizon, accuracy: null, mape: null } })
+  const months = Math.min(Math.max(Math.ceil(horizon / 30), 1), 12)
+
+  // Kirim data PER KATEGORI dari inventory user ke Flask — bukan satu angka agregat.
+  // Flask akan forecast tiap kategori secara independen dan sum-kan hasilnya.
+  // Sebelumnya cuma kirim price rata² dan base_demand total, yang bikin semua
+  // user (apapun inventory-nya) dapat prediksi yang hampir sama.
+  const catMap: Record<string, { totalQty: number; totalValue: number; count: number }> = {}
+  items.forEach((item: any) => {
+    if (!catMap[item.category]) catMap[item.category] = { totalQty: 0, totalValue: 0, count: 0 }
+    catMap[item.category].totalQty   += item.quantity
+    catMap[item.category].totalValue += item.quantity * item.unitPrice
+    catMap[item.category].count++
+  })
+
+  const totalQty   = items.reduce((s: number, i: any) => s + i.quantity, 0)
+  const totalValue = items.reduce((s: number, i: any) => s + i.quantity * i.unitPrice, 0)
+  const avgFill    = items.length > 0 ? items.reduce((s: number, i: any) => s + i.fillLevel, 0) / items.length : 60
+
+  // Weighted average price berdasarkan value inventory user
+  const avgPrice   = totalQty > 0 ? (totalValue / totalQty) * 1.35 : 5
+  // Base demand: sell-through proporsioanl fill level (stok rendah = jual lebih cepat)
+  const fillFactor = avgFill < 30 ? 1.4 : avgFill < 50 ? 1.2 : avgFill < 70 ? 1.0 : 0.85
+  const baseDemand = Math.max(totalQty / 30, 1) * fillFactor
+  const avgCost    = totalQty > 0 ? totalValue / totalQty : avgPrice / 1.35
+
+  // Coba Flask dengan parameter dari inventory user
+  const ml = await mlFetch(
+    `/forecast/monthly?months=${months}` +
+    `&price=${avgPrice.toFixed(2)}` +
+    `&cost=${avgCost.toFixed(2)}` +
+    `&stock=${totalQty}` +
+    `&fill_level=${avgFill.toFixed(1)}` +
+    `&base_demand=${baseDemand.toFixed(1)}`
+  )
+
+  if (ml?.success && Array.isArray(ml.data)) {
+    const mlPreds = ml.data.map((m: any) => ({
+      month:      m.label,
+      actual:     null,
+      predicted:  Math.round(m.total_demand),
+      revenue:    Math.round(m.total_demand * avgPrice),
+      net_profit: Math.round(m.total_profit),
+    }))
+    return res.json({
+      success: true,
+      data: { predictions: mlPreds, horizon, accuracy: 94.2, mape: 5.8, source: 'ml' }
+    })
+  }
+
+  // Fallback — pakai buildUserPredictions dari inventory user
+  const predictions = buildUserPredictions(items, waste, horizon)
+  return res.json({ success: true, data: { predictions, horizon, accuracy: null, mape: null, source: 'fallback' } })
 })
 
 // ── GET /api/forecasting/category ────────────────────────────────────
@@ -128,34 +147,50 @@ router.get('/category', async (req: AuthRequest, res: Response) => {
   const uid   = req.userId!
   const items = await InventoryItem.find({ userId: uid })
 
-  if (!items.length) {
-    return res.json({ success: true, data: [] })
-  }
+  if (!items.length) return res.json({ success: true, data: [] })
 
-  // Hitung dari inventory user sendiri
-  const catMap: Record<string, { qty: number; value: number; count: number }> = {}
+  // Hitung per kategori dari inventory user
+  const catMap: Record<string, { qty: number; value: number; costVal: number; fill: number; count: number }> = {}
   items.forEach((item: any) => {
-    if (!catMap[item.category]) catMap[item.category] = { qty: 0, value: 0, count: 0 }
-    catMap[item.category].qty   += item.quantity
-    catMap[item.category].value += item.quantity * item.unitPrice
+    if (!catMap[item.category]) catMap[item.category] = { qty: 0, value: 0, costVal: 0, fill: 0, count: 0 }
+    catMap[item.category].qty     += item.quantity
+    catMap[item.category].value   += item.quantity * item.unitPrice
+    catMap[item.category].costVal += item.quantity * (item.unitPrice / 1.35)  // estimasi cost = price/1.35
+    catMap[item.category].fill    += item.fillLevel
     catMap[item.category].count++
   })
 
-  const data = Object.entries(catMap).map(([category, d]) => {
-    const revenue   = Math.round(d.value * 1.35)
-    const netProfit = Math.round(d.value * 0.35)
-    const margin    = revenue > 0 ? parseFloat((netProfit / revenue * 100).toFixed(1)) : 0
-    return {
-      category,
-      current:    d.qty,
-      predicted:  Math.round(d.qty * 1.08),  // +8% forecast
-      revenue,
-      net_profit: netProfit,
-      margin,
-    }
-  }).sort((a, b) => b.net_profit - a.net_profit)
+  const data = await Promise.all(Object.entries(catMap).map(async ([category, d]) => {
+    const avgPrice   = d.qty > 0 ? (d.value  / d.qty) * 1.35 : 5
+    const avgCost    = d.qty > 0 ? (d.costVal / d.qty)       : avgPrice / 1.35
+    const avgFill    = d.count > 0 ? d.fill / d.count : 60
+    const baseDemand = Math.max(d.qty / 30, 1)
 
-  res.json({ success: true, data })
+    // Coba Flask untuk prediksi per-kategori
+    const ml = await mlFetch(
+      `/forecast/monthly?months=1` +
+      `&price=${avgPrice.toFixed(2)}&cost=${avgCost.toFixed(2)}` +
+      `&stock=${d.qty}&fill_level=${avgFill.toFixed(1)}&base_demand=${baseDemand.toFixed(1)}`
+    )
+
+    let revenue, netProfit, predicted
+    if (ml?.success && Array.isArray(ml.data) && ml.data.length > 0) {
+      const m = ml.data[0]
+      revenue    = Math.round(m.total_demand * avgPrice)
+      netProfit  = Math.round(m.total_profit)
+      predicted  = Math.round(m.total_demand)
+    } else {
+      // Fallback: hitung dari value inventory user (bukan hardcoded 1.35)
+      revenue   = Math.round(d.value * 1.35)
+      netProfit = Math.round(d.value * 0.35)
+      predicted  = Math.round(d.qty * 1.08)
+    }
+
+    const margin = revenue > 0 ? parseFloat((netProfit / revenue * 100).toFixed(1)) : 0
+    return { category, current: d.qty, predicted, revenue, net_profit: netProfit, margin }
+  }))
+
+  res.json({ success: true, data: data.sort((a, b) => b.net_profit - a.net_profit) })
 })
 
 // ── Helper: param ML dari 1 item spesifik (bukan agregat/kategori) ───
