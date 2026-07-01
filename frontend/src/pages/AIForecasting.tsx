@@ -351,22 +351,25 @@ export default function AIForecasting() {
           </ResponsiveContainer>
         ) : (
           <ResponsiveContainer width="100%" height={220}>
-            <ComposedChart data={demand.filter((d: any) => d.revenue != null)}>
+            <ComposedChart data={demand} margin={{ top:4, right:48, bottom:0, left:4 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
               <XAxis dataKey="month" tick={{ fontSize: 11 }} />
-              <YAxis tick={{ fontSize: 11 }} tickFormatter={v => fmtK(v)}
-                domain={[(dataMin: number) => Math.floor(dataMin * 0.85), (dataMax: number) => Math.ceil(dataMax * 1.08)]}
-              />
+              {/* Revenue bars (left axis) */}
+              <YAxis yAxisId="rev" tick={{ fontSize: 10 }} tickFormatter={v => fmtK(v)}
+                domain={[(d: number) => Math.floor(d * 0.82), (d: number) => Math.ceil(d * 1.10)]} width={60} />
+              {/* Net profit line (right axis) — scale terpisah supaya kelihatan variasinya */}
+              <YAxis yAxisId="net" orientation="right" tick={{ fontSize: 10 }} tickFormatter={v => fmtK(v)}
+                domain={[(d: number) => Math.floor(d * 0.82), (d: number) => Math.ceil(d * 1.10)]} width={50} />
               <Tooltip formatter={(v: any, name: string) => [v != null ? fmtK(v) : '-', name]} />
               <Legend wrapperStyle={{ fontSize: 11 }} />
-              <Bar dataKey="revenue" fill="#93c5fd" name="Revenue" radius={[3,3,0,0]} maxBarSize={24} />
-              <Bar dataKey="net_profit" name="Net Profit" radius={[3,3,0,0]} maxBarSize={24}>
-                {demand.filter((d: any) => d.revenue != null).map((row: any, i: number) => (
+              <Bar yAxisId="rev" dataKey="revenue" fill="#93c5fd" name="Revenue" radius={[3,3,0,0]} maxBarSize={24} opacity={0.85} />
+              <Bar yAxisId="net" dataKey="net_profit" name="Net Profit" radius={[3,3,0,0]} maxBarSize={24}>
+                {demand.map((row: any, i: number) => (
                   <Cell key={i} fill={row.net_profit >= 0 ? '#22c55e' : '#ef4444'} />
                 ))}
               </Bar>
-              <Line type="monotone" dataKey="net_profit" stroke="#8b5cf6"
-                name="Trend" dot={false} strokeWidth={2} strokeDasharray="5 3" />
+              <Line yAxisId="net" type="monotone" dataKey="net_profit" stroke="#8b5cf6"
+                name="Trend" dot={false} strokeWidth={2.5} strokeDasharray="5 3" connectNulls />
             </ComposedChart>
           </ResponsiveContainer>
         )}

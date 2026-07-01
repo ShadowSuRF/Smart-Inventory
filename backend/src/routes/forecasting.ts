@@ -283,46 +283,70 @@ router.get('/items-summary', async (req: AuthRequest, res: Response) => {
 
 // ── GET /api/forecasting/monthly-profit ──────────────────────────────
 router.get('/monthly-profit', async (req: AuthRequest, res: Response) => {
+  // Coba Flask dulu — Flask /forecast/monthly-profit baca data CSV asli
+  // dan return per-bulan agregat yang beneran bervariasi
+  const ml = await mlFetch('/forecast/monthly-profit')
+  if (ml?.success && Array.isArray(ml.data) && ml.data.length > 0) {
+    return res.json({ success: true, data: ml.data, source: 'csv' })
+  }
+
+  // Flask offline → generate synthetic dengan noise INDEPENDEN per komponen
+  // supaya margin bervariasi (sebelumnya semua komponen dikali faktor yang sama
+  // → margin selalu flat karena sf & noise cancel out di divisi)
   const uid = req.userId!
   const [items, waste] = await Promise.all([
     InventoryItem.find({ userId: uid }),
     WasteItem.find({ userId: uid }),
   ])
 
-  if (!items.length) {
-    return res.json({ success: true, data: [] })
-  }
+  if (!items.length) return res.json({ success: true, data: [], source: 'fallback' })
 
-  const now        = new Date()
-  const stockValue = items.reduce((s: number, i: any) => s + i.quantity * i.unitPrice, 0)
-  const wasteValue = waste.reduce((s: number, w: any) => s + w.value, 0)
-  const monthlyRev  = stockValue * 1.35 / 3
-  const monthlyCOGS = stockValue / 3
-  const monthlyWaste = wasteValue / 3
+  const stockValue   = items.reduce((s: number, i: any) => s + i.quantity * i.unitPrice, 0)
+  const wasteValue   = waste.reduce((s: number, w: any) => s + w.value, 0)
+  const baseRevMonth = stockValue * 1.35 / 3
+  const baseCOGS     = stockValue / 3
+  const baseWaste    = wasteValue > 0 ? wasteValue / Math.max(waste.length, 1) / 3 : stockValue * 0.05 / 3
 
+  // Seed dari user ID biar konsisten antar refresh
+  const uid_str = uid.toString()
+  const seed = uid_str.split('').reduce((s: number, c: string) => s + c.charCodeAt(0), 0)
+  const seededRng = (i: number, offset: number = 0) =>
+    (Math.sin(seed * 7.3 + i * 3.14 + offset) + 1) / 2
+
+  const now = new Date()
   const result = Array.from({ length: 12 }, (_, i) => {
-    const d      = new Date(now.getFullYear(), now.getMonth() - 11 + i, 1)
-    const ym     = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
-    const label  = d.toLocaleString('en-US', { month: 'short', year: '2-digit' })
-    const sf     = 1 + 0.2 * Math.sin((d.getMonth() - 3) * Math.PI / 6)
-    // Deterministik berdasarkan bulan (tidak random setiap request)
-    const noise  = 1 + 0.05 * Math.sin(d.getMonth() * 2.7 + 1.3)
-    const rev    = Math.round(monthlyRev   * sf * noise)
-    const cogs   = Math.round(monthlyCOGS  * sf * noise)
-    const wst    = Math.round(monthlyWaste * sf * noise)
-    const gross  = rev - cogs
-    const net    = gross - wst
+    const d   = new Date(now.getFullYear(), now.getMonth() - 11 + i, 1)
+    const ym  = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`
+    const lbl = d.toLocaleString('en-US', { month: 'short', year: '2-digit' })
+    const mo  = d.getMonth()
+
+    // Seasonal factors INDEPENDEN per komponen → margin bervariasi
+    const sfRev   = 1 + 0.28 * Math.sin((mo - 2) * Math.PI / 6)
+    const sfCOGS  = 1 + 0.22 * Math.sin((mo - 1) * Math.PI / 6)   // sedikit lagged
+    const sfWaste = 1 + 0.40 * Math.sin((mo - 4) * Math.PI / 5.5) // waste lebih volatile
+
+    // Noise independen per komponen (deterministik)
+    const nRev   = 1 + (seededRng(i, 0)   - 0.5) * 0.18
+    const nCOGS  = 1 + (seededRng(i, 1.1) - 0.5) * 0.12
+    const nWaste = 1 + (seededRng(i, 2.3) - 0.5) * 0.30  // waste paling volatile
+
+    const rev   = Math.round(baseRevMonth * sfRev   * nRev)
+    const cogs  = Math.round(baseCOGS    * sfCOGS  * nCOGS)
+    const wst   = Math.round(baseWaste   * sfWaste * nWaste)
+    const gross = rev - cogs
+    const net   = gross - wst
     const totalQty = items.reduce((s: number, it: any) => s + it.quantity, 0)
+
     return {
-      month: label, ym,
+      month: lbl, ym,
       revenue: rev, cogs, waste: wst,
       gross_profit: gross, net_profit: net,
-      units_sold: Math.round(totalQty * sf * noise),
+      units_sold: Math.round(totalQty * sfRev * nRev * 0.9),
       margin: rev > 0 ? parseFloat((net / rev * 100).toFixed(1)) : 0,
     }
   })
 
-  res.json({ success: true, data: result })
+  res.json({ success: true, data: result, source: 'fallback' })
 })
 
 // ── GET /api/forecasting/ml-stats ────────────────────────────────────
