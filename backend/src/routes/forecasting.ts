@@ -16,6 +16,7 @@ async function mlFetch(endpoint: string, options?: RequestInit): Promise<any> {
 }
 
 // ── Helper: bangun data prediksi dari inventory user ─────────────────
+// Dipakai HANYA saat Flask ML API offline (source: fallback).
 function buildUserPredictions(
   items: any[], waste: any[], horizon: number
 ): any[] {
@@ -23,29 +24,44 @@ function buildUserPredictions(
   const totalValue = items.reduce((s: number, i: any) => s + i.quantity * i.unitPrice, 0)
   const wasteVal   = waste.reduce((s: number, w: any) => s + w.value, 0)
 
-  // Base daily demand dari rata-rata quantity
-  const baseDemand = Math.max(totalQty / 30, 1)
-  // Base revenue/profit per bulan dari stock value
-  const baseRev    = totalValue * 1.35
-  const baseCOGS   = totalValue
-  const baseWaste  = wasteVal / Math.max(waste.length, 1) || totalValue * 0.05
-  const baseNet    = baseRev - baseCOGS - baseWaste
+  // Estimasi demand harian dari rata-rata fill level & quantity
+  const avgFill = items.length > 0
+    ? items.reduce((s: number, i: any) => s + i.fillLevel, 0) / items.length
+    : 60
+  // Adjust base demand: stok rendah = permintaan tinggi (tanda laku keras)
+  const fillFactor = avgFill < 30 ? 1.4 : avgFill < 50 ? 1.2 : avgFill < 70 ? 1.0 : 0.85
+  const baseDemand = Math.max(totalQty / 30, 1) * fillFactor
+
+  const baseRev   = totalValue * 1.35
+  const baseCOGS  = totalValue
+  const baseWaste = wasteVal / Math.max(waste.length, 1) || totalValue * 0.05
+  const baseNet   = baseRev - baseCOGS - baseWaste
 
   const now    = new Date()
   const months: { month: string; actual: number | null; predicted: number; revenue: number | null; net_profit: number | null }[] = []
 
-  // 12 bulan historis + horizon ke depan
   const totalMonths = 12 + Math.ceil(horizon / 30)
+
+  // Seed deterministik dari inventory (biar konsisten tiap refresh tapi beda per user)
+  const seed = items.reduce((s: number, i: any) => s + (i._id?.toString().charCodeAt(0) ?? 0), 0)
+  const seededRng = (i: number) => (Math.sin(seed * 9.301 + i * 3.14) + 1) / 2
+
   for (let i = 0; i < totalMonths; i++) {
-    const d       = new Date(now.getFullYear(), now.getMonth() - 11 + i, 1)
-    const label   = d.toLocaleString('en-US', { month: 'short', year: '2-digit' })
-    const isHist  = i < 12
-    // Seasonal factor berdasarkan bulan
-    const sf      = 1 + 0.15 * Math.sin((d.getMonth() - 3) * Math.PI / 6)
-    const weekdayBoost = d.getDay() === 6 || d.getDay() === 0 ? 1.15 : 1.0
-    const demand  = Math.round(baseDemand * 30 * sf * weekdayBoost)
-    const rev     = isHist ? Math.round(baseRev * sf) : null
-    const net     = isHist ? Math.round(baseNet * sf) : null
+    const d      = new Date(now.getFullYear(), now.getMonth() - 11 + i, 1)
+    const label  = d.toLocaleString('en-US', { month: 'short', year: '2-digit' })
+    const isHist = i < 12
+    const mo     = d.getMonth() // 0-11
+
+    // Seasonal factor ±30% supaya grafik kelihatan bergelombang
+    const sf = 1 + 0.30 * Math.sin((mo - 2) * Math.PI / 6)
+    // Noise per bulan (deterministik, bukan random) supaya grafik gak datar
+    const noise = 1 + (seededRng(i) - 0.5) * 0.12
+    // Trend ringan: naik tipis dari waktu ke waktu
+    const trendFactor = 1 + (i / totalMonths) * 0.08
+
+    const demand = Math.round(baseDemand * 30 * sf * noise * trendFactor)
+    const rev    = isHist ? Math.round(baseRev  * sf * noise * trendFactor) : null
+    const net    = isHist ? Math.round(baseNet  * sf * noise * trendFactor) : null
 
     months.push({
       month:      label,

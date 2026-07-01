@@ -39,7 +39,15 @@ app.use('/api/analytics', requireAuth, analyticsRoutes)
 app.use('/api/notifications', requireAuth, notificationRoutes)
 app.use('/api/iot', requireAuth, iotRoutes)
 
-app.get('/health', (_req, res) => res.json({ status: 'ok', db: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected', timestamp: new Date().toISOString() }))
+// Health check — expose di /health (direct backend) DAN /api/health (lewat Vite proxy)
+// Frontend pakai api.get('/health') → Vite proxy forward ke /api/health → backend ini
+const healthHandler = (_req: any, res: any) => res.json({
+  status: 'ok',
+  db: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
+  timestamp: new Date().toISOString(),
+})
+app.get('/health', healthHandler)
+app.get('/api/health', healthHandler)   // ← ini yang diperlukan frontend
 
 app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error('[Error]', err.message)

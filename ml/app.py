@@ -571,17 +571,40 @@ class ModelManager:
 
     def forecast_monthly(self, params: dict, n_months: int = 6) -> list:
         today = datetime.date.today()
-        out = []
+        out   = []
+
+        # lag_buf DIBAWA antar bulan supaya prediksi bulan ke-2 dapat
+        # input yang realistis (bukan reset ke base_demand tiap kali).
+        # Inisialisasi dengan seasonal level bulan pertama, bukan flat.
+        first_mo   = today.month
+        init_sf    = 1.0 + 0.25 * np.sin(2 * np.pi * (today.timetuple().tm_yday - 80) / 365)
+        init_level = float(params.get('base_demand', 100)) * init_sf
+        lag_buf    = [init_level] * 30
+
         for m_off in range(n_months):
             yr = today.year + (today.month + m_off - 1) // 12
             mo = (today.month + m_off - 1) % 12 + 1
-            days = self.forecast_days({**params, 'month': mo}, n_days=30)
-            td = sum(r['predicted_demand'] for r in days)
-            tp = sum(r['predicted_profit'] for r in days)
-            out.append({'month': f'{yr}-{mo:02d}',
-                        'label': datetime.date(yr, mo, 1).strftime('%b %y'),
-                        'total_demand': round(td), 'total_profit': round(tp, 2),
-                        'avg_daily_demand': round(td / 30, 1)})
+            first_day = datetime.date(yr, mo, 1)
+
+            td, tp = 0.0, 0.0
+            for day_i in range(30):
+                d   = first_day + datetime.timedelta(days=day_i)
+                doy = d.timetuple().tm_yday
+                p2  = {**params, 'month': d.month, 'day_of_week': d.weekday(),
+                       'day_of_year': doy, 'lag1': lag_buf[-1],
+                       'lag7': lag_buf[-7], 'roll7': float(np.mean(lag_buf[-7:]))}
+                dem  = self.predict_demand(p2)
+                prof = self.predict_profit(p2)
+                td  += dem; tp += prof
+                lag_buf.append(dem); lag_buf.pop(0)
+
+            out.append({
+                'month':            f'{yr}-{mo:02d}',
+                'label':            first_day.strftime('%b %y'),
+                'total_demand':     round(td),
+                'total_profit':     round(tp, 2),
+                'avg_daily_demand': round(td / 30, 1),
+            })
         return out
 
 

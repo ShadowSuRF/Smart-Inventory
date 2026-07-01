@@ -319,27 +319,44 @@ export default function AIForecasting() {
           </div>
         ) : tab === 'demand' ? (
           <ResponsiveContainer width="100%" height={220}>
-            <AreaChart data={demand}>
+            <ComposedChart data={demand}>
+              <defs>
+                <linearGradient id="demandGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%"  stopColor="#2dd4bf" stopOpacity={0.25}/>
+                  <stop offset="95%" stopColor="#2dd4bf" stopOpacity={0.02}/>
+                </linearGradient>
+                <linearGradient id="actualGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%"  stopColor="#94a3b8" stopOpacity={0.20}/>
+                  <stop offset="95%" stopColor="#94a3b8" stopOpacity={0.02}/>
+                </linearGradient>
+              </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
               <XAxis dataKey="month" tick={{ fontSize: 11 }} />
-              <YAxis tick={{ fontSize: 11 }} tickFormatter={v => v ? `${(v/1000).toFixed(0)}K` : '0'} />
+              {/* domain: min-10% sampai max+10% supaya variasi terlihat jelas */}
+              <YAxis tick={{ fontSize: 11 }}
+                tickFormatter={v => v >= 1000 ? `${(v/1000).toFixed(1)}K` : String(v)}
+                domain={[(dataMin: number) => Math.floor(dataMin * 0.88), (dataMax: number) => Math.ceil(dataMax * 1.08)]}
+              />
               <Tooltip formatter={(v: any) => v != null ? v.toLocaleString() : '-'} />
               <Legend wrapperStyle={{ fontSize: 11 }} />
               {hasActual && (
-                <Area type="monotone" dataKey="actual" stroke="#94a3b8" fill="#f1f5f9"
-                  name="Actual Demand" connectNulls={false} />
+                <Area type="monotone" dataKey="actual" stroke="#94a3b8"
+                  fill="url(#actualGrad)" strokeWidth={2}
+                  name="Actual Demand" connectNulls={false} dot={false} />
               )}
-              <Area type="monotone" dataKey="predicted" stroke="#2dd4bf"
-                fill="rgba(45,212,191,0.1)" strokeDasharray="6 4"
-                name="Predicted Demand" connectNulls={false} />
-            </AreaChart>
+              <Area type="monotone" dataKey="predicted" stroke="#0ea572"
+                fill="url(#demandGrad)" strokeWidth={2.5} strokeDasharray="7 4"
+                name="Predicted Demand" connectNulls={false} dot={{ r: 3, fill: '#0ea572' }} />
+            </ComposedChart>
           </ResponsiveContainer>
         ) : (
           <ResponsiveContainer width="100%" height={220}>
             <ComposedChart data={demand.filter((d: any) => d.revenue != null)}>
               <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
               <XAxis dataKey="month" tick={{ fontSize: 11 }} />
-              <YAxis tick={{ fontSize: 11 }} tickFormatter={v => fmtK(v)} />
+              <YAxis tick={{ fontSize: 11 }} tickFormatter={v => fmtK(v)}
+                domain={[(dataMin: number) => Math.floor(dataMin * 0.85), (dataMax: number) => Math.ceil(dataMax * 1.08)]}
+              />
               <Tooltip formatter={(v: any, name: string) => [v != null ? fmtK(v) : '-', name]} />
               <Legend wrapperStyle={{ fontSize: 11 }} />
               <Bar dataKey="revenue" fill="#93c5fd" name="Revenue" radius={[3,3,0,0]} maxBarSize={24} />
