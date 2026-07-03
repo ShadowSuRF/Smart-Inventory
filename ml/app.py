@@ -465,48 +465,63 @@ class ModelManager:
         self._load()
 
     def _load(self):
-        try:
-            paths = {
-                'demand': os.path.join(BASE, 'gb_demand.pkl'),
-                'profit': os.path.join(BASE, 'gb_profit.pkl'),
-                'mean':   os.path.join(BASE, 'feature_mean.npy'),
-                'std':    os.path.join(BASE, 'feature_std.npy'),
-                'names':  os.path.join(BASE, 'feature_names.npy'),
-            }
-            if not os.path.exists(paths['mean']):
-                paths['mean'] = os.path.join(BASE, 'feat_mean.npy')
-            if not os.path.exists(paths['std']):
-                paths['std'] = os.path.join(BASE, 'feat_std.npy')
+        paths = {
+            'demand': os.path.join(BASE, 'gb_demand.pkl'),
+            'profit': os.path.join(BASE, 'gb_profit.pkl'),
+            'mean':   os.path.join(BASE, 'feat_mean.npy'),
+            'std':    os.path.join(BASE, 'feat_std.npy'),
+            'names':  os.path.join(BASE, 'feature_names.npy'),
+        }
 
+        # Baca model_metrics.json dulu untuk tahu data_source
+        metrics_path = os.path.join(BASE, 'model_metrics.json')
+        if os.path.exists(metrics_path):
+            import json
+            with open(metrics_path) as f:
+                m = json.load(f)
+            self.accuracy    = m.get('demand_accuracy')
+            self.mape        = m.get('demand_mape')
+            self.data_source = m.get('data_source', 'not_trained')
+            self.data_label  = m.get('data_label',  'Belum ada model')
+        else:
+            self.accuracy    = None
+            self.mape        = None
+            self.data_source = 'not_trained'
+            self.data_label  = 'Belum ada model'
+
+        # Cek apakah pkl files ada
+        if not os.path.exists(paths['demand']) or not os.path.exists(paths['profit']):
+            print('[ML] ⚪ Tidak ada model yang diload — pkl files tidak ditemukan')
+            print('[ML]    → Import inventory kamu, lalu klik Run Model di halaman Forecasting')
+            self.loaded      = False
+            self.data_source = 'not_trained'
+            return
+
+        # Kalau pkl ada tapi data_source = not_trained atau global_csv → block
+        if self.data_source in ('not_trained', 'global_csv'):
+            print(f'[ML] ⚠️  Model ada tapi data_source={self.data_source} → tidak akan digunakan')
+            print('[ML]    → Klik Run Model untuk train dari inventory kamu')
+            self.loaded = False
+            return
+
+        # Load pkl hanya kalau data_source = user_inventory
+        try:
             with open(paths['demand'], 'rb') as f: self.gb_demand = pickle.load(f)
             with open(paths['profit'], 'rb') as f: self.gb_profit = pickle.load(f)
             self.feat_mean = np.load(paths['mean'])
             self.feat_std  = np.load(paths['std'])
             if os.path.exists(paths['names']):
                 self.feat_names = np.load(paths['names'], allow_pickle=True).tolist()
-
-            # Load akurasi beneran dari file JSON hasil training —
-            # kalau file ini ada, berarti model pernah di-train dari sini dan
-            # angka ini genuine. Kalau gak ada, accuracy = None (jujur: belum tau).
-            metrics_path = os.path.join(BASE, 'model_metrics.json')
-            if os.path.exists(metrics_path):
-                import json
-                with open(metrics_path) as f:
-                    m = json.load(f)
-                self.accuracy = m.get('demand_accuracy')
-                self.mape     = m.get('demand_mape')
-            else:
-                # Pkl ada tapi metrics.json belum ada (model dari luar/lama) →
-                # accuracy unknown, jangan karang angka
-                self.accuracy = None
-                self.mape     = None
-
             self.loaded = True
-            acc_str = f'{self.accuracy}%' if self.accuracy else 'unknown (run training first)'
-            print(f'[ML] Models loaded ✅  demand acc={acc_str}')
+            print(f'[ML] ✅ Model loaded — source=user_inventory  acc={self.accuracy}%')
         except Exception as e:
             print(f'[ML] Load failed: {e}')
             self.loaded = False
+
+    @property
+    def ready_for_user(self) -> bool:
+        """True hanya kalau model sudah ditraining dari inventory user sendiri."""
+        return self.loaded and self.data_source == 'user_inventory'
 
     def _build_row(self, p: dict) -> np.ndarray:
         today = datetime.date.today()
@@ -624,42 +639,51 @@ model = ModelManager()
 @app.route('/health')
 def health():
     return jsonify({
-        'status': 'ok', 'model_loaded': model.loaded,
-        'accuracy': model.accuracy, 'mape': model.mape,
+        'status': 'ok',
+        'model_loaded':  model.loaded,
+        'model_ready':   model.ready_for_user,
+        'data_source':   getattr(model, 'data_source', 'global_csv'),
+        'accuracy': model.accuracy if model.ready_for_user else None,
+        'mape':     model.mape     if model.ready_for_user else None,
         'last_trained': time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(model.last_trained)),
-        'endpoints': [
-            'POST /predict/demand', 'POST /predict/profit', 'POST /predict/batch',
-            'GET  /forecast/daily?days=30', 'GET  /forecast/category',
-            'GET  /forecast/monthly?months=6', 'GET  /forecast/monthly-profit',
-            'GET  /model/stats', 'POST /model/retrain',
-        ]
     })
+
+
+def _not_trained_response():
+    return jsonify({
+        'success': False,
+        'error': 'model_not_trained',
+        'message': 'Model belum ditraining dari inventory kamu. Klik Run Model di halaman Forecasting.',
+    }), 400
 
 
 @app.route('/predict/demand', methods=['POST'])
 def predict_demand():
+    if not model.ready_for_user: return _not_trained_response()
     p = request.get_json(force=True) or {}
     params = p.get('simple', p)
     val = model.predict_demand(params)
     return jsonify({'success': True, 'data': {
         'predicted_demand': round(val, 1), 'unit': 'units/day',
-        'model': 'GradientBoosting', 'confidence': model.accuracy / 100,
+        'model': 'GradientBoosting', 'confidence': (model.accuracy or 0) / 100,
     }})
 
 
 @app.route('/predict/profit', methods=['POST'])
 def predict_profit():
+    if not model.ready_for_user: return _not_trained_response()
     p = request.get_json(force=True) or {}
     params = p.get('simple', p)
     val = model.predict_profit(params)
     return jsonify({'success': True, 'data': {
         'predicted_profit': round(val, 2), 'unit': 'USD/day',
-        'model': 'GradientBoosting', 'confidence': model.accuracy / 100,
+        'model': 'GradientBoosting', 'confidence': (model.accuracy or 0) / 100,
     }})
 
 
 @app.route('/predict/batch', methods=['POST'])
 def predict_batch():
+    if not model.ready_for_user: return _not_trained_response()
     data  = request.get_json(force=True) or {}
     items = data.get('items', [])
     out = []
@@ -677,6 +701,7 @@ def predict_batch():
 
 @app.route('/forecast/daily')
 def forecast_daily():
+    if not model.ready_for_user: return _not_trained_response()
     n = min(int(request.args.get('days', 30)), 180)
     p = {k: float(v) for k, v in request.args.items() if k != 'days'}
     fc = model.forecast_days(p, n_days=n)
@@ -685,6 +710,7 @@ def forecast_daily():
 
 @app.route('/forecast/monthly')
 def forecast_monthly():
+    if not model.ready_for_user: return _not_trained_response()
     n = min(int(request.args.get('months', 6)), 12)
     p = {k: float(v) for k, v in request.args.items() if k != 'months'}
     fc = model.forecast_monthly(p, n_months=n)
@@ -693,34 +719,15 @@ def forecast_monthly():
 
 @app.route('/forecast/monthly-profit')
 def forecast_monthly_profit():
-    csv_path = os.path.join(BASE, '..', 'inventory_dummy_10k.csv')
-    try:
-        df_hist = pd.read_csv(csv_path)
-        df_hist['Date'] = pd.to_datetime(df_hist['Date'])
-        df_hist['YM']   = df_hist['Date'].dt.to_period('M').astype(str)
-        monthly = df_hist.groupby('YM').agg(
-            revenue=('Revenue', 'sum'), cogs=('COGS', 'sum'),
-            waste=('Waste_Value', 'sum'), gross=('Gross_Profit', 'sum'),
-            net=('Net_Profit', 'sum'), sold=('Units_Sold', 'sum')
-        ).reset_index().sort_values('YM')
-        out = []
-        for _, r in monthly.iterrows():
-            yr, mo = r['YM'].split('-')
-            lbl = datetime.date(int(yr), int(mo), 1).strftime('%b %y')
-            rev, net = round(r['revenue']), round(r['net'])
-            out.append({'month': lbl, 'ym': r['YM'], 'revenue': rev, 'cogs': round(r['cogs']),
-                        'waste': round(r['waste']), 'gross_profit': round(r['gross']),
-                        'net_profit': net, 'units_sold': round(r['sold']),
-                        'margin': round(net / rev * 100, 1) if rev > 0 else 0})
-        return jsonify({'success': True, 'data': out})
-    except Exception:
-        params = {'price': 5.0, 'cost': 2.5, 'base_demand': 120}
-        fc = model.forecast_monthly(params, n_months=6)
-        return jsonify({'success': True, 'data': fc})
+    if not model.ready_for_user: return _not_trained_response()
+    p = {'price': 5.0, 'cost': 2.5, 'base_demand': 120}
+    fc = model.forecast_monthly(p, n_months=6)
+    return jsonify({'success': True, 'data': fc})
 
 
 @app.route('/forecast/category')
 def forecast_category():
+    if not model.ready_for_user: return _not_trained_response()
     csv_path = os.path.join(BASE, '..', 'inventory_dummy_10k.csv')
     try:
         df_src = pd.read_csv(csv_path)
@@ -782,53 +789,64 @@ def model_stats():
 
 @app.route('/model/retrain', methods=['POST'])
 def retrain():
-    """Retrain GB model.
-    Kalau ada JSON body dengan field 'inventory' (dari MongoDB user) → generate
-    training data dari inventory mereka dan retrain dari situ.
-    Kalau body kosong / tidak ada inventory → retrain dari CSV lokal (default).
+    """Retrain GB model dari inventory user.
+    Return pkl files sebagai base64 sehingga Node bisa simpan ke MongoDB per-user.
     """
     body = request.get_json(silent=True) or {}
     inventory = body.get('inventory', [])
     user_id   = body.get('user_id', 'unknown')
-    source    = body.get('source', 'csv')
 
-    def _do():
-        import json as _json
-        time.sleep(0.5)
-        try:
-            if inventory and len(inventory) > 0:
-                # ── Retrain dari data inventory MongoDB user ──────────────
-                print(f'[ML] Retraining dari {len(inventory)} item MongoDB (user: {user_id})')
-                csv_path = _generate_training_csv_from_inventory(inventory, user_id)
-                results = train_gb_models(csv_path=csv_path, make_plots=False, compare=False)
-                # Update model_metrics.json dengan data_source = 'user_inventory'
-                import json as _json2
-                metrics_path = os.path.join(BASE, 'model_metrics.json')
-                if os.path.exists(metrics_path):
-                    with open(metrics_path) as f: m = _json2.load(f)
-                    m['data_source']  = 'user_inventory'
-                    m['data_label']   = f'Inventory kamu ({len(inventory)} produk)'
-                    m['user_id']      = user_id
-                    with open(metrics_path, 'w') as f: _json2.dump(m, f, indent=2)
-                print(f'[ML] Retrain complete ✅ demand={results["demand"]["acc"]:.1f}%')
-            else:
-                # ── Retrain dari CSV lokal (default) ─────────────────────
-                print('[ML] Retraining dari CSV lokal...')
-                results = train_gb_models(make_plots=False, compare=False)
-                print(f'[ML] Retrain complete ✅ demand={results["demand"]["acc"]:.1f}%')
+    if not inventory:
+        return jsonify({'success': False, 'error': 'Tidak ada data inventory'}), 400
 
-            model._load()
-            model.last_trained = time.time()
-        except Exception as e:
-            print(f'[ML] Retrain error: {e}')
+    try:
+        print(f'[ML] Retraining dari {len(inventory)} item (user: {user_id[:8]})')
+        csv_path = _generate_training_csv_from_inventory(inventory, user_id)
+        results  = train_gb_models(csv_path=csv_path, make_plots=False, compare=False)
 
-    threading.Thread(target=_do, daemon=True).start()
-    return jsonify({
-        'success': True,
-        'message': f'Retraining dimulai dari {"inventory MongoDB" if inventory else "CSV lokal"}',
-        'estimated_seconds': 150,
-        'inventory_count': len(inventory),
-    })
+        # Update model_metrics.json
+        import json as _j, base64 as _b64
+        metrics_path = os.path.join(BASE, 'model_metrics.json')
+        if os.path.exists(metrics_path):
+            with open(metrics_path) as f: m = _j.load(f)
+            m.update({
+                'data_source':     'user_inventory',
+                'data_label':      f'Inventory kamu ({len(inventory)} produk)',
+                'user_id':         user_id,
+                'inventory_count': len(inventory),
+            })
+            with open(metrics_path, 'w') as f: _j.dump(m, f, indent=2)
+
+        # Baca pkl files dan encode base64 untuk disimpan Node ke MongoDB per-user
+        def _read_b64(path):
+            if os.path.exists(path):
+                with open(path, 'rb') as f: return _b64.b64encode(f.read()).decode('utf-8')
+            return None
+
+        model_files = {
+            'gb_demand':     _read_b64(os.path.join(BASE, 'gb_demand.pkl')),
+            'gb_profit':     _read_b64(os.path.join(BASE, 'gb_profit.pkl')),
+            'feat_mean':     _read_b64(os.path.join(BASE, 'feat_mean.npy')),
+            'feat_std':      _read_b64(os.path.join(BASE, 'feat_std.npy')),
+            'feature_names': _read_b64(os.path.join(BASE, 'feature_names.npy')),
+        }
+
+        model._load()
+        model.last_trained = time.time()
+        print(f'[ML] Retrain complete demand={results["demand"]["acc"]:.1f}%')
+
+        return jsonify({
+            'success':         True,
+            'demand_accuracy': round(results['demand']['acc'], 1),
+            'demand_mape':     round(results['demand']['mape'], 1),
+            'profit_accuracy': round(results['profit']['acc'], 1),
+            'training_rows':   results['demand'].get('n_samples', 0),
+            'inventory_count': len(inventory),
+            'model_files':     model_files,
+        })
+    except Exception as e:
+        print(f'[ML] Retrain error: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 def _generate_training_csv_from_inventory(inventory: list, user_id: str) -> str:

@@ -6,14 +6,9 @@ import {
 } from 'recharts'
 import api from '../lib/api'
 import { Spinner } from '../components/ui/PageLoader'
+import { fmtRp } from '../lib/currency'
 import toast from 'react-hot-toast'
 
-const fmtK = (v: number) => {
-  if (v == null || isNaN(v)) return '—'
-  if (Math.abs(v) >= 1_000_000) return `$${(v/1_000_000).toFixed(1)}M`
-  if (Math.abs(v) >= 1_000)     return `$${(v/1_000).toFixed(0)}K`
-  return `$${v.toFixed(0)}`
-}
 const pct = (v: number) => `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`
 const PIE_COLORS = ['#22c55e','#3b82f6','#f59e0b','#ef4444','#8b5cf6','#14b8a6','#f97316']
 
@@ -40,7 +35,7 @@ const CustomTooltip = ({ active, payload, label }: any) => {
         <div key={p.dataKey} className="flex justify-between gap-4 mb-1">
           <span style={{ color: p.color }}>{p.name}</span>
           <span className="font-semibold">
-            {p.dataKey === 'margin' ? `${p.value}%` : fmtK(p.value)}
+            {p.dataKey === 'margin' ? `${p.value}%` : fmtRp(p.value)}
           </span>
         </div>
       ))}
@@ -179,7 +174,7 @@ export default function ProfitDashboard() {
               <span className="text-base">{k.icon}</span>
             </div>
             <div className={`text-xl font-bold ${k.color}`}>
-              {loading ? '…' : k.val !== null ? fmtK(k.val) : `${k.pct!.toFixed(1)}%`}
+              {loading ? '…' : k.val !== null ? fmtRp(k.val) : `${k.pct!.toFixed(1)}%`}
             </div>
             <div className="text-xs text-slate-400">{k.sub}</div>
           </div>
@@ -204,7 +199,7 @@ export default function ProfitDashboard() {
               <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
               <XAxis dataKey="month" tick={{ fontSize:10 }} />
               {/* Left Y-axis: Revenue & Net Profit — domain zoom ke data */}
-              <YAxis yAxisId="money" tick={{ fontSize:10 }} tickFormatter={v => fmtK(v)}
+              <YAxis yAxisId="money" tick={{ fontSize:10 }} tickFormatter={v => fmtRp(v)}
                 domain={domainRevenue} width={64} />
               {/* Right Y-axis: Margin % — independent domain */}
               <YAxis yAxisId="pct" orientation="right" tick={{ fontSize:10 }}
@@ -254,7 +249,7 @@ export default function ProfitDashboard() {
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                 <XAxis dataKey="month" tick={{ fontSize:9 }} />
                 {/* Domain zoom: min 80% → max 110% dari data range */}
-                <YAxis tick={{ fontSize:9 }} tickFormatter={v => fmtK(v)}
+                <YAxis tick={{ fontSize:9 }} tickFormatter={v => fmtRp(v)}
                   domain={[(d: number) => Math.floor(d * 0.80), (d: number) => Math.ceil(d * 1.08)]} />
                 <Tooltip content={<CustomTooltip />} />
                 <Legend wrapperStyle={{ fontSize:10 }} />
@@ -276,7 +271,7 @@ export default function ProfitDashboard() {
               <ComposedChart data={filteredMonthly} margin={{ top:4, right:4, bottom:0, left:4 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                 <XAxis dataKey="month" tick={{ fontSize:9 }} />
-                <YAxis tick={{ fontSize:9 }} tickFormatter={v => fmtK(v)}
+                <YAxis tick={{ fontSize:9 }} tickFormatter={v => fmtRp(v)}
                   domain={[(d: number) => Math.floor(d * 0.82), (d: number) => Math.ceil(d * 1.10)]} />
                 <Tooltip content={<CustomTooltip />} />
                 <ReferenceLine y={0} stroke="#ef4444" strokeDasharray="4 2" strokeWidth={1} />
@@ -305,7 +300,7 @@ export default function ProfitDashboard() {
                   <Pie data={pieCats} cx="50%" cy="50%" innerRadius={40} outerRadius={72} dataKey="value" paddingAngle={2}>
                     {pieCats.map((_, i) => <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />)}
                   </Pie>
-                  <Tooltip formatter={(v: any) => fmtK(v)} />
+                  <Tooltip formatter={(v: any) => fmtRp(v)} />
                 </PieChart>
               </ResponsiveContainer>
               <div className="flex-1 space-y-1.5">
@@ -343,7 +338,7 @@ export default function ProfitDashboard() {
                         <div className="flex gap-3 flex-shrink-0">
                           <span className="text-slate-400">{p.units_sold.toLocaleString()} sold</span>
                           <span className={`font-semibold ${p.net_profit >= 0 ? 'text-green-600' : 'text-red-500'}`}>
-                            {fmtK(p.net_profit)}
+                            {fmtRp(p.net_profit)}
                           </span>
                         </div>
                       </div>
@@ -375,7 +370,7 @@ export default function ProfitDashboard() {
                   <div key={w.category}>
                     <div className="flex justify-between text-xs mb-1">
                       <span className="text-slate-600 dark:text-slate-400">{w.category}</span>
-                      <span className={`font-semibold ${tc}`}>{fmtK(w.value)}</span>
+                      <span className={`font-semibold ${tc}`}>{fmtRp(w.value)}</span>
                     </div>
                     <div className="h-1.5 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden">
                       <div className={`h-full rounded-full ${bc}`} style={{ width:`${pctW}%` }} />
@@ -385,7 +380,7 @@ export default function ProfitDashboard() {
               })}
             </div>
             <div className="flex flex-col justify-center items-center p-4 bg-red-50 dark:bg-red-900/20 rounded-lg">
-              <div className="text-3xl font-bold text-red-600">{fmtK(analytics.totalWasteLoss || 0)}</div>
+              <div className="text-3xl font-bold text-red-600">{fmtRp(analytics.totalWasteLoss || 0)}</div>
               <div className="text-xs text-red-500 mt-1">Total Waste Loss</div>
               <div className="text-xs text-slate-500 mt-2">
                 {analytics.totalRevenue > 0
@@ -418,12 +413,12 @@ export default function ProfitDashboard() {
               )) : [...filteredMonthly].reverse().map(row => (
                 <tr key={row.ym} className="border-b border-slate-50 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50">
                   <td className="py-1.5 pr-3 font-medium text-slate-700 dark:text-slate-300 whitespace-nowrap">{row.month}</td>
-                  <td className="py-1.5 pr-3 text-blue-600 font-medium">{fmtK(row.revenue)}</td>
-                  <td className="py-1.5 pr-3 text-slate-500">{fmtK(row.cogs)}</td>
-                  <td className="py-1.5 pr-3 text-green-600 font-medium">{fmtK(row.gross_profit)}</td>
-                  <td className="py-1.5 pr-3 text-red-500">{fmtK(row.waste)}</td>
+                  <td className="py-1.5 pr-3 text-blue-600 font-medium">{fmtRp(row.revenue)}</td>
+                  <td className="py-1.5 pr-3 text-slate-500">{fmtRp(row.cogs)}</td>
+                  <td className="py-1.5 pr-3 text-green-600 font-medium">{fmtRp(row.gross_profit)}</td>
+                  <td className="py-1.5 pr-3 text-red-500">{fmtRp(row.waste)}</td>
                   <td className={`py-1.5 pr-3 font-bold ${row.net_profit >= 0 ? 'text-green-600' : 'text-red-500'}`}>
-                    {fmtK(row.net_profit)}
+                    {fmtRp(row.net_profit)}
                   </td>
                   <td className="py-1.5 pr-3">
                     <span className={`badge text-xs ${row.margin >= 35 ? 'bg-green-100 text-green-700' : row.margin >= 20 ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'}`}>
@@ -438,11 +433,11 @@ export default function ProfitDashboard() {
               <tfoot>
                 <tr className="border-t-2 border-slate-200 dark:border-slate-600 bg-slate-50 dark:bg-slate-800/50">
                   <td className="py-2 pr-3 font-bold text-slate-900 dark:text-slate-100">TOTAL</td>
-                  <td className="py-2 pr-3 text-blue-700 font-bold">{fmtK(totalRev)}</td>
-                  <td className="py-2 pr-3 text-slate-600 font-semibold">{fmtK(filteredMonthly.reduce((s,r)=>s+r.cogs,0))}</td>
-                  <td className="py-2 pr-3 text-green-700 font-bold">{fmtK(totalGross)}</td>
-                  <td className="py-2 pr-3 text-red-600 font-bold">{fmtK(totalWaste)}</td>
-                  <td className={`py-2 pr-3 font-bold text-base ${totalNet >= 0 ? 'text-green-700' : 'text-red-600'}`}>{fmtK(totalNet)}</td>
+                  <td className="py-2 pr-3 text-blue-700 font-bold">{fmtRp(totalRev)}</td>
+                  <td className="py-2 pr-3 text-slate-600 font-semibold">{fmtRp(filteredMonthly.reduce((s,r)=>s+r.cogs,0))}</td>
+                  <td className="py-2 pr-3 text-green-700 font-bold">{fmtRp(totalGross)}</td>
+                  <td className="py-2 pr-3 text-red-600 font-bold">{fmtRp(totalWaste)}</td>
+                  <td className={`py-2 pr-3 font-bold text-base ${totalNet >= 0 ? 'text-green-700' : 'text-red-600'}`}>{fmtRp(totalNet)}</td>
                   <td className="py-2 pr-3">
                     <span className={`badge text-xs font-bold ${avgMargin >= 35 ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
                       {avgMargin.toFixed(1)}%

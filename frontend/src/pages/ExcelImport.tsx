@@ -14,6 +14,8 @@ export default function ExcelImport() {
   const [progress, setProgress]       = useState(0)
   const [drag, setDrag]               = useState(false)
   const [result, setResult]           = useState<any>(null)
+  const [undoing, setUndoing]         = useState(false)
+  const [undoDone, setUndoDone]       = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
 
   const fetchLogs = useCallback(async () => {
@@ -129,19 +131,49 @@ export default function ExcelImport() {
             {/* Quick navigation setelah import — langsung ke menu yang relevan */}
             <div className="border-t border-green-200 dark:border-green-800 pt-3 mt-1">
               <div className="text-xs text-slate-500 dark:text-slate-400 mb-2">Lihat data yang baru diimport:</div>
-              <div className="flex gap-2 flex-wrap">
+              <div className="flex gap-2 flex-wrap items-center">
                 <button onClick={() => navigate('/inventory')}
                   className="btn btn-primary text-xs py-1">
                   📦 Lihat Inventory
                 </button>
                 <button onClick={() => navigate('/profit')}
                   className="btn btn-secondary text-xs py-1">
-                  💰 Lihat Profit & Loss
+                  💰 Lihat P&L
                 </button>
                 <button onClick={() => navigate('/forecasting')}
                   className="btn btn-secondary text-xs py-1">
-                  🧠 Lihat AI Forecasting
+                  🧠 AI Forecasting
                 </button>
+                {/* Tombol undo — hapus semua item dari sesi import ini */}
+                {result.sessionId && !undoDone && (
+                  <button
+                    onClick={async () => {
+                      if (!confirm(`Batalkan import ${result.imported} item ini? Item yang sudah diedit tidak akan terhapus.`)) return
+                      setUndoing(true)
+                      try {
+                        const r = await fetch(`/api/inventory/import-session/${result.sessionId}`, {
+                          method: 'DELETE',
+                          headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+                        })
+                        const data = await r.json()
+                        if (data.success) {
+                          toast.success(`✅ ${data.deleted} item berhasil dibatalkan`)
+                          setUndoDone(true)
+                        } else {
+                          toast.error(data.error || 'Gagal membatalkan import')
+                        }
+                      } catch { toast.error('Gagal membatalkan import') }
+                      finally { setUndoing(false) }
+                    }}
+                    disabled={undoing}
+                    className="btn text-xs py-1 bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 disabled:opacity-60 ml-auto"
+                  >
+                    {undoing ? '⏳ Membatalkan…' : '↩ Batalkan Import Ini'}
+                  </button>
+                )}
+                {undoDone && (
+                  <span className="text-xs text-green-600 ml-auto font-medium">✅ Import dibatalkan</span>
+                )}
               </div>
             </div>
           </div>

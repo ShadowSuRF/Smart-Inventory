@@ -33,6 +33,7 @@ export interface IInventoryItem extends Document {
   unitPrice: number; fillLevel: number; weight: number
   status: 'optimal' | 'low_stock' | 'critical'
   expiryDate: Date; supplierId: string
+  importSession?: string  // track import batch for undo
 }
 const InventoryItemSchema = new Schema<IInventoryItem>({
   userId:   { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
@@ -49,6 +50,7 @@ const InventoryItemSchema = new Schema<IInventoryItem>({
   status:   { type: String, enum: ['optimal','low_stock','critical'], default: 'optimal' },
   expiryDate:  { type: Date, required: true },
   supplierId:  { type: String, default: '' },
+  importSession: { type: String, default: null, index: true },  // null = manual entry
 }, { timestamps: true })
 InventoryItemSchema.index({ userId: 1, rfid: 1 }, { unique: true })
 InventoryItemSchema.pre('save', function (next) {
@@ -233,3 +235,43 @@ const UserAnalyticsSnapshotSchema = new Schema<IUserAnalyticsSnapshot>({
   totalNetProfit:  { type: Number, default: 0 }, profitMargin: { type: Number, default: 0 },
 }, { timestamps: true })
 export const UserAnalyticsSnapshot = mongoose.model<IUserAnalyticsSnapshot>('UserAnalyticsSnapshot', UserAnalyticsSnapshotSchema)
+
+// ── UserMLModel — simpan model ML per user di MongoDB ─────────────────────
+// Setiap user punya model Gradient Boosting sendiri yang dilatih dari
+// inventory mereka. Pkl files disimpan sebagai Buffer di MongoDB sehingga:
+// - Ganti akun → model tidak hilang (tersimpan di DB masing-masing)
+// - Multi-user bisa training paralel tanpa konflik file
+export interface IUserMLModel extends Document {
+  userId:          Types.ObjectId
+  gbDemandPkl:    Buffer    // gb_demand.pkl content
+  gbProfitPkl:    Buffer    // gb_profit.pkl content
+  featMean:       Buffer    // feat_mean.npy content
+  featStd:        Buffer    // feat_std.npy content
+  featureNames:   Buffer    // feature_names.npy content
+  demandAccuracy:  number | null
+  demandMape:      number | null
+  profitAccuracy:  number | null
+  trainingRows:    number
+  trainedAt:       Date | null
+  dataSource:      string   // 'user_inventory' | 'not_trained'
+  dataLabel:       string
+  inventoryCount:  number   // berapa item inventory saat training
+  updatedAt:       Date
+}
+const UserMLModelSchema = new Schema<IUserMLModel>({
+  userId:         { type: Schema.Types.ObjectId, ref: 'User', required: true, unique: true },
+  gbDemandPkl:   { type: Buffer, default: null },
+  gbProfitPkl:   { type: Buffer, default: null },
+  featMean:      { type: Buffer, default: null },
+  featStd:       { type: Buffer, default: null },
+  featureNames:  { type: Buffer, default: null },
+  demandAccuracy: { type: Number, default: null },
+  demandMape:     { type: Number, default: null },
+  profitAccuracy: { type: Number, default: null },
+  trainingRows:   { type: Number, default: 0 },
+  trainedAt:      { type: Date,   default: null },
+  dataSource:     { type: String, default: 'not_trained' },
+  dataLabel:      { type: String, default: 'Belum ada model' },
+  inventoryCount: { type: Number, default: 0 },
+}, { timestamps: true })
+export const UserMLModel = mongoose.model<IUserMLModel>('UserMLModel', UserMLModelSchema)

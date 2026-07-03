@@ -403,46 +403,71 @@ router.get('/monthly-profit', async (req: AuthRequest, res: Response) => {
 })
 
 // ── GET /api/forecasting/ml-stats ────────────────────────────────────
-router.get('/ml-stats', async (_req: Request, res: Response) => {
-  // Coba Flask dulu (kalau jalan, return data live)
-  const ml = await mlFetch('/model/stats')
-  if (ml?.success) return res.json({ success: true, data: { ...ml.data, online: true } })
+router.get('/ml-stats', async (req: AuthRequest, res: Response) => {
+  const uid = req.userId!
 
-  // Flask offline → baca model_metrics.json langsung dari disk.
-  // File ini disimpan setiap kali training (python3 ml/app.py train),
-  // jadi akurasi beneran tersedia walau Flask belum jalan.
-  try {
-    const metricsPath = require('path').join(__dirname, '..', '..', '..', 'ml', 'model_metrics.json')
-    const metrics = JSON.parse(require('fs').readFileSync(metricsPath, 'utf-8'))
+  // 1. Coba Flask dulu (kalau jalan, return data live)
+  const ml = await mlFetch('/model/stats')
+  if (ml?.success) {
+    // Merge dengan data MongoDB user (yang lebih spesifik per-user)
+    const { UserMLModel } = await import('../models')
+    const userModel = await UserMLModel.findOne({ userId: uid }).select('-gbDemandPkl -gbProfitPkl -featMean -featStd -featureNames')
+    if (userModel && userModel.dataSource === 'user_inventory') {
+      return res.json({
+        success: true,
+        data: {
+          ...ml.data,
+          demand_accuracy:  userModel.demandAccuracy,
+          demand_mape:      userModel.demandMape,
+          profit_accuracy:  userModel.profitAccuracy,
+          training_rows:    userModel.trainingRows,
+          trained_at:       userModel.trainedAt?.toISOString(),
+          data_source:      userModel.dataSource,
+          data_label:       userModel.dataLabel,
+          inventory_count:  userModel.inventoryCount,
+          online: true,
+        }
+      })
+    }
+    return res.json({ success: true, data: { ...ml.data, online: true } })
+  }
+
+  // 2. Flask offline → cek MongoDB UserMLModel dulu
+  const { UserMLModel } = await import('../models')
+  const userModel = await UserMLModel.findOne({ userId: uid }).select('-gbDemandPkl -gbProfitPkl -featMean -featStd -featureNames')
+  if (userModel && userModel.dataSource === 'user_inventory') {
     return res.json({
       success: true,
       data: {
-        online:           false,
-        model_type:       'GradientBoostingRegressor (scikit-learn)',
-        demand_accuracy:  metrics.demand_accuracy,   // akurasi BENERAN dari training
-        demand_mape:      metrics.demand_mape,
-        profit_accuracy:  metrics.profit_accuracy,
-        n_features:       metrics.n_features || 33,
-        training_rows:    metrics.training_rows,
-        trained_at:       metrics.trained_at,
-        training_period:  'Jan 2024 — Jun 2026',
-        data_source:      metrics.data_source || 'global_csv',
-        data_label:       metrics.data_label  || 'Data training bawaan',
-        note:             'Flask offline — akurasi dari model_metrics.json (training terakhir)',
-      }
-    })
-  } catch {
-    // model_metrics.json belum ada (belum pernah training)
-    return res.json({
-      success: true,
-      data: {
-        online: false, demand_accuracy: null, demand_mape: null,
-        model_type: 'Gradient Boosting (scikit-learn)', n_features: 33,
-        training_rows: 0, training_period: 'Belum pernah training',
-        note: 'Jalankan: python3 ml/app.py train',
+        online:          false,
+        model_type:      'GradientBoostingRegressor (scikit-learn)',
+        demand_accuracy: userModel.demandAccuracy,
+        demand_mape:     userModel.demandMape,
+        profit_accuracy: userModel.profitAccuracy,
+        n_features:      33,
+        training_rows:   userModel.trainingRows,
+        trained_at:      userModel.trainedAt?.toISOString(),
+        data_source:     userModel.dataSource,
+        data_label:      userModel.dataLabel,
+        inventory_count: userModel.inventoryCount,
+        note:            'Flask offline — data dari MongoDB (training terakhir)',
       }
     })
   }
+
+  // 3. Belum punya model — return empty state
+  return res.json({
+    success: true,
+    data: {
+      online:          false,
+      demand_accuracy: null,
+      demand_mape:     null,
+      n_features:      33,
+      training_rows:   0,
+      data_source:     'not_trained',
+      data_label:      'Belum ada model — import inventory lalu klik Run Model',
+    }
+  })
 })
 
 // ── POST /api/forecasting/predict ────────────────────────────────────
@@ -459,9 +484,9 @@ router.post('/predict', async (req: AuthRequest, res: Response) => {
 })
 
 // ── POST /api/forecasting/retrain ────────────────────────────────────
-// Retrain ML model menggunakan data inventory USER dari MongoDB.
-// Bukan dari dummy CSV global — data training dihasilkan dari InventoryItem
-// milik user (product, harga, kategori, stok) yang disimpan di MongoDB Atlas.
+// Training dari inventory MongoDB user → simpan model ke MongoDB per-user
+// (bukan file disk bersama) supaya setiap user punya model sendiri dan
+// ganti akun tidak kehilangan training.
 router.post('/retrain', async (req: AuthRequest, res: Response) => {
   const uid = req.userId!
   const items = await InventoryItem.find({ userId: uid })
@@ -469,47 +494,79 @@ router.post('/retrain', async (req: AuthRequest, res: Response) => {
   if (!items.length) {
     return res.json({
       success: false,
-      error: 'Belum ada inventory. Import Excel/CSV atau tambahkan item manual dulu sebelum retrain.'
+      error: 'Belum ada inventory. Import Excel/CSV atau tambahkan item manual dulu sebelum training.'
     })
   }
 
-  // Kirim data inventory user ke Flask untuk ditraining
-  // Flask akan generate time-series dari data ini dan retrain GB model
+  // Kirim inventory ke Flask untuk training
   const inventoryData = items.map((i: any) => ({
-    name:        i.name,
-    category:    i.category,
-    zone:        i.zone,
-    unit_price:  i.unitPrice,
-    quantity:    i.quantity,
-    fill_level:  i.fillLevel,
-    status:      i.status,
+    name:       i.name,
+    category:   i.category,
+    zone:       i.zone || 'A',
+    unit_price: i.unitPrice,
+    quantity:   i.quantity,
+    fill_level: i.fillLevel,
+    status:     i.status,
   }))
 
-  const ml = await mlFetch('/model/retrain', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      inventory: inventoryData,
-      user_id: uid.toString(),
-      source: 'mongodb_user_inventory',
-    }),
-  })
-
-  if (ml?.success) {
-    return res.json({
-      success: true,
-      message: `Retraining dari ${items.length} item inventory kamu dimulai`,
-      estimatedTime: `${ml.estimated_seconds || 150}s`,
-      inventory_items: items.length,
+  try {
+    const ml = await mlFetch('/model/retrain', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        inventory: inventoryData,
+        user_id: uid.toString(),
+        source: 'mongodb_user_inventory',
+      }),
     })
-  }
 
-  // Flask offline — beri tahu cara jalankan manual
-  res.json({
-    success: false,
-    error: 'Flask ML API belum jalan. Jalankan: python3 ml/app.py di terminal, lalu coba lagi.',
-    hint: 'Atau: python3 ml/app.py train untuk retrain dari CSV lokal'
-  })
+    if (!ml?.success) {
+      return res.json({ success: false, error: ml?.error || 'Training gagal di Flask' })
+    }
+
+    // Simpan model files (base64) ke MongoDB per-user
+    const { UserMLModel } = await import('../models')
+    const now = new Date()
+    const modelDoc: any = {
+      userId:         uid,
+      demandAccuracy: ml.demand_accuracy,
+      demandMape:     ml.demand_mape,
+      profitAccuracy: ml.profit_accuracy,
+      trainingRows:   ml.training_rows || 0,
+      trainedAt:      now,
+      dataSource:     'user_inventory',
+      dataLabel:      `Inventory kamu (${items.length} produk)`,
+      inventoryCount: items.length,
+    }
+
+    // Simpan pkl files sebagai Buffer di MongoDB
+    if (ml.model_files) {
+      const buf = (b64: string) => Buffer.from(b64, 'base64')
+      if (ml.model_files.gb_demand)     modelDoc.gbDemandPkl   = buf(ml.model_files.gb_demand)
+      if (ml.model_files.gb_profit)     modelDoc.gbProfitPkl   = buf(ml.model_files.gb_profit)
+      if (ml.model_files.feat_mean)     modelDoc.featMean      = buf(ml.model_files.feat_mean)
+      if (ml.model_files.feat_std)      modelDoc.featStd       = buf(ml.model_files.feat_std)
+      if (ml.model_files.feature_names) modelDoc.featureNames  = buf(ml.model_files.feature_names)
+    }
+
+    await UserMLModel.findOneAndUpdate(
+      { userId: uid },
+      { $set: modelDoc },
+      { upsert: true, new: true }
+    )
+
+    return res.json({
+      success:          true,
+      message:          `Model berhasil dilatih dari ${items.length} produk kamu`,
+      demand_accuracy:  ml.demand_accuracy,
+      profit_accuracy:  ml.profit_accuracy,
+      training_rows:    ml.training_rows,
+      inventory_count:  items.length,
+      trained_at:       now.toISOString(),
+    })
+  } catch (e: any) {
+    return res.json({ success: false, error: e.message || 'Flask ML API belum jalan. Jalankan: python3 ml/app.py' })
+  }
 })
 
 export default router

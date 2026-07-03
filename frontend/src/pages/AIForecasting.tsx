@@ -10,12 +10,7 @@ import {
 import api from '../lib/api'
 import toast from 'react-hot-toast'
 
-const fmtK = (v: number) => {
-  if (v == null) return '-'
-  if (Math.abs(v) >= 1_000_000) return `$${(v/1_000_000).toFixed(1)}M`
-  if (Math.abs(v) >= 1_000)     return `$${(v/1_000).toFixed(0)}K`
-  return `$${v.toFixed(0)}`
-}
+import { fmtRp } from '../lib/currency'
 
 const riskCls = (r: string) =>
   r === 'high' ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
@@ -34,7 +29,7 @@ export default function AIForecasting() {
   const [search, setSearch]     = useState('')
   const [categoryFilter, setCategoryFilter] = useState('ALL')
   const [demand, setDemand]     = useState<any[]>([])
-  const [forecastSource, setForecastSource] = useState<'ml'|'fallback'|'ml_offline'|'no_data'|null>(null)
+  const [forecastSource, setForecastSource] = useState<'ml'|'fallback'|'ml_offline'|'ml_not_trained'|'no_data'|null>(null)
   const [forecastAccuracy, setForecastAccuracy] = useState<number|null>(null)
   const [forecastMessage, setForecastMessage] = useState<string|null>(null)
   const [itemMeta, setItemMeta] = useState<ItemMeta | null>(null)
@@ -45,6 +40,8 @@ export default function AIForecasting() {
   const [chartLoading, setChartLoading] = useState(true)
   const [horizon, setHorizon]   = useState(90)
   const [retraining, setRetraining] = useState(false)
+  const [trainingPhase, setTrainingPhase] = useState<string|null>(null)
+  const [trainingProgress, setTrainingProgress] = useState(0)
   const [tab, setTab]           = useState<'demand'|'profit'>('demand')
 
   // Data referensi yang gak tergantung horizon/produk yg dipilih — sekali fetch
@@ -73,7 +70,15 @@ export default function AIForecasting() {
     setChartLoading(true)
     try {
       if (selectedItemId === 'ALL') {
-        const predRes = await getForecastPredictions(horizon)
+        const predRes = await getForecastPredictions(horizon).catch((e: any) => {
+          // Flask return 400 kalau model belum ditraining dari inventory user
+          if (e?.response?.data?.error === 'model_not_trained') {
+            setForecastSource('ml_not_trained')
+            setForecastMessage(e.response.data.message)
+          }
+          return null
+        })
+        if (!predRes) return
         const d = predRes.data.data
         setDemand(d?.predictions || [])
         setForecastSource(d?.source || null)
@@ -81,7 +86,14 @@ export default function AIForecasting() {
         setForecastMessage(d?.message || null)
         setItemMeta(null)
       } else {
-        const itemRes = await getItemForecast(selectedItemId, horizon)
+        const itemRes = await getItemForecast(selectedItemId, horizon).catch((e: any) => {
+          if (e?.response?.data?.error === 'model_not_trained') {
+            setForecastSource('ml_not_trained')
+            setForecastMessage(e.response.data.message)
+          }
+          return null
+        })
+        if (!itemRes) return
         const d = itemRes.data.data
         setDemand(d?.predictions || [])
         setForecastSource(d?.source || null)
@@ -102,17 +114,106 @@ export default function AIForecasting() {
   const refreshAll = () => { fetchReference(); fetchChart() }
 
   const handleRetrain = async () => {
-    setRetraining(true)
-    try {
-      const res = await triggerModelRetrain()
-      const est = res.data?.estimatedTime || '~2-3 menit'
-      toast.success(`Model retraining dimulai di background — estimasi ${est}`)
-      toast('Cek lagi nanti / klik 🔄 refresh utk lihat hasilnya', { icon: 'ℹ️' })
-    } catch {
-      toast.error('Gagal memulai retrain')
-    } finally {
-      setRetraining(false)
+    if (items.length === 0) {
+      toast.error('Belum ada inventory. Import data dulu sebelum training.')
+      return
     }
+
+    setRetraining(true)
+    setTrainingProgress(0)
+    setTrainingPhase('Mengirim data inventory ke ML engine...')
+
+    // Step 1 — trigger retrain
+    try {
+      await triggerModelRetrain()
+    } catch (e: any) {
+      const msg = e?.response?.data?.error || 'Gagal memulai training'
+      toast.error(msg)
+      setRetraining(false)
+      setTrainingPhase(null)
+      return
+    }
+
+    // Step 2 — animasi progress sambil polling ml-stats
+    // Flask training jalan di background thread (~10-150 detik tergantung jumlah item)
+    const PHASES = [
+      { pct: 10, msg: `Memuat ${items.length} produk dari MongoDB...` },
+      { pct: 25, msg: 'Membuat time-series training data (2.5 tahun)...' },
+      { pct: 45, msg: 'Feature engineering 33 fitur...' },
+      { pct: 65, msg: 'Melatih Gradient Boosting (demand model)...' },
+      { pct: 82, msg: 'Melatih Gradient Boosting (profit model)...' },
+      { pct: 92, msg: 'Menyimpan model & menghitung akurasi...' },
+    ]
+
+    let phaseIdx = 0
+    const snapTrainedAt = mlStats?.trained_at  // catat waktu sebelum training
+
+    const POLL_INTERVAL = 2000
+    const MAX_WAIT_MS = 5 * 60 * 1000  // 5 menit timeout
+    const startTime = Date.now()
+
+    await new Promise<void>((resolve) => {
+      const tick = setInterval(async () => {
+        const elapsed = Date.now() - startTime
+
+        // Animasi progress berdasarkan waktu berlalu
+        const timeBasedPct = Math.min(90, (elapsed / (items.length * 30 * 1000 + 15000)) * 90)
+        const targetPct = Math.max(
+          phaseIdx < PHASES.length ? PHASES[phaseIdx].pct : 90,
+          timeBasedPct
+        )
+        setTrainingProgress(p => Math.min(p + (targetPct - p) * 0.3, 90))
+
+        // Geser fase berdasarkan waktu
+        const expectedPhaseIdx = Math.min(
+          Math.floor(elapsed / (items.length * 5000 + 10000)),
+          PHASES.length - 1
+        )
+        if (expectedPhaseIdx > phaseIdx) {
+          phaseIdx = expectedPhaseIdx
+          setTrainingPhase(PHASES[phaseIdx].msg)
+        }
+
+        // Timeout
+        if (elapsed > MAX_WAIT_MS) {
+          clearInterval(tick)
+          toast.error('Training timeout — cek terminal Flask')
+          setRetraining(false)
+          setTrainingPhase(null)
+          resolve()
+          return
+        }
+
+        // Poll ml-stats untuk cek apakah training selesai
+        try {
+          const statsRes = await api.get('/forecasting/ml-stats')
+          const stats = statsRes.data?.data
+          // Training selesai kalau data_source berubah ke user_inventory
+          // DAN trained_at berubah dari sebelum training
+          if (stats?.data_source === 'user_inventory' &&
+              stats?.trained_at !== snapTrainedAt) {
+            clearInterval(tick)
+            setTrainingProgress(100)
+            setTrainingPhase('✅ Training selesai!')
+            setMlStats(stats)
+            toast.success(
+              `✅ Model berhasil dilatih dari ${items.length} produk kamu!  Accuracy: ${stats.demand_accuracy}%`
+            )
+            // Refresh chart otomatis setelah 800ms
+            setTimeout(async () => {
+              await fetchChart()
+              await fetchReference()
+              setRetraining(false)
+              setTrainingPhase(null)
+              setTrainingProgress(0)
+            }, 800)
+            resolve()
+          }
+        } catch {
+          // ignore poll error, lanjutkan
+        }
+      }, POLL_INTERVAL)
+    })
   }
 
   const jumpToItem = (id: string) => {
@@ -307,8 +408,14 @@ export default function AIForecasting() {
               <option value={180}>180 Days</option>
             </select>
             <button onClick={handleRetrain} disabled={retraining}
-              className="btn btn-primary text-xs py-1 disabled:opacity-60">
-              {retraining ? '⏳ Training…' : '▶ Run Model'}
+              className="btn btn-primary text-xs py-1 disabled:opacity-70 disabled:cursor-wait flex items-center gap-1.5">
+              {retraining ? (
+                <>
+                  <span className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full inline-block"
+                    style={{ animation:'spin 0.8s linear infinite' }} />
+                  Training {trainingProgress.toFixed(0)}%...
+                </>
+              ) : '▶ Run Model'}
             </button>
           </div>
         </div>
@@ -351,6 +458,54 @@ export default function AIForecasting() {
 
         {chartLoading ? (
           <div className="h-48 skeleton rounded-lg" />
+        ) : retraining ? (
+          /* ── Training in progress overlay ── */
+          <div className="h-48 flex flex-col items-center justify-center gap-3">
+            {/* Progress bar */}
+            <div className="w-full max-w-sm">
+              <div className="flex justify-between text-xs text-slate-500 dark:text-slate-400 mb-1.5">
+                <span className="font-medium">🧠 Melatih model dari inventory kamu...</span>
+                <span>{trainingProgress.toFixed(0)}%</span>
+              </div>
+              <div className="h-2 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden">
+                <div
+                  className="h-full rounded-full transition-all duration-500"
+                  style={{
+                    width: `${trainingProgress}%`,
+                    backgroundColor: trainingProgress === 100 ? '#22c55e' : 'var(--ac)',
+                  }}
+                />
+              </div>
+            </div>
+
+            {/* Current phase message */}
+            <div className="text-xs text-center text-slate-600 dark:text-slate-300 max-w-xs animate-pulse">
+              {trainingPhase || 'Memulai training...'}
+            </div>
+
+            {/* Item count info */}
+            <div className="text-xs text-slate-400 text-center">
+              {items.length} produk · {(items.length * 2.5 * 365).toLocaleString()} baris training data
+            </div>
+
+            {/* Animated dots */}
+            <div className="flex gap-1">
+              {[0,1,2,3,4].map(i => (
+                <div key={i} className="w-1.5 h-1.5 rounded-full"
+                  style={{
+                    backgroundColor: 'var(--ac)',
+                    animation: `bounce 1.2s ease-in-out ${i * 0.15}s infinite`,
+                    opacity: 0.7,
+                  }} />
+              ))}
+            </div>
+
+            {/* Note: training time estimate */}
+            <div className="text-xs text-slate-400 italic">
+              Estimasi: {items.length <= 5 ? '~30 detik' : items.length <= 20 ? '~1-2 menit' : '~3-5 menit'} —
+              jangan tutup halaman ini
+            </div>
+          </div>
         ) : forecastSource === 'no_data' || (demand.length === 0 && !forecastSource) ? (
           /* ── State 1: Belum ada inventory sama sekali ── */
           <div className="h-48 flex flex-col items-center justify-center text-slate-400 gap-2">
@@ -379,6 +534,21 @@ export default function AIForecasting() {
             </div>
             <div className="text-xs text-slate-400 mt-1">
               Setelah jalan, klik 🔄 Refresh atau ▶ Run Model
+            </div>
+          </div>
+        ) : forecastSource === 'ml_not_trained' ? (
+          /* ── State 3: Flask jalan tapi model masih dari global CSV ── */
+          <div className="h-48 flex flex-col items-center justify-center gap-2">
+            <div className="text-4xl">🎯</div>
+            <div className="text-sm font-medium text-slate-700 dark:text-slate-200">
+              Belum ditraining dari data kamu
+            </div>
+            <div className="text-xs text-slate-500 dark:text-slate-400 text-center max-w-sm">
+              Flask sudah jalan, tapi model belum dilatih dari inventory kamu.<br/>
+              Klik <strong>▶ Run Model</strong> untuk melatih dari {items.length} produk kamu.
+            </div>
+            <div className="text-xs text-amber-600 dark:text-amber-400 mt-1 text-center">
+              ⚠ Forecasting tidak akan tampil sampai kamu klik Run Model
             </div>
           </div>
         ) : demand.length === 0 ? (
@@ -424,12 +594,12 @@ export default function AIForecasting() {
               <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
               <XAxis dataKey="month" tick={{ fontSize: 11 }} />
               {/* Revenue bars (left axis) */}
-              <YAxis yAxisId="rev" tick={{ fontSize: 10 }} tickFormatter={v => fmtK(v)}
+              <YAxis yAxisId="rev" tick={{ fontSize: 10 }} tickFormatter={v => fmtRp(v)}
                 domain={[(d: number) => Math.floor(d * 0.82), (d: number) => Math.ceil(d * 1.10)]} width={60} />
               {/* Net profit line (right axis) — scale terpisah supaya kelihatan variasinya */}
-              <YAxis yAxisId="net" orientation="right" tick={{ fontSize: 10 }} tickFormatter={v => fmtK(v)}
+              <YAxis yAxisId="net" orientation="right" tick={{ fontSize: 10 }} tickFormatter={v => fmtRp(v)}
                 domain={[(d: number) => Math.floor(d * 0.82), (d: number) => Math.ceil(d * 1.10)]} width={50} />
-              <Tooltip formatter={(v: any, name: string) => [v != null ? fmtK(v) : '-', name]} />
+              <Tooltip formatter={(v: any, name: string) => [v != null ? fmtRp(v) : '-', name]} />
               <Legend wrapperStyle={{ fontSize: 11 }} />
               <Bar yAxisId="rev" dataKey="revenue" fill="#93c5fd" name="Revenue" radius={[3,3,0,0]} maxBarSize={24} opacity={0.85} />
               <Bar yAxisId="net" dataKey="net_profit" name="Net Profit" radius={[3,3,0,0]} maxBarSize={24}>

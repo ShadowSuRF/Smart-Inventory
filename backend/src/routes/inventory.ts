@@ -125,6 +125,9 @@ router.post('/import', upload.single('file'), async (req: AuthRequest, res: Resp
       return
     }
 
+    // Generate session ID unik untuk sesi import ini (untuk fitur undo)
+    const sessionId = `import_${Date.now()}_${Math.random().toString(36).slice(2,8)}`
+
     // Deduplikasi: kalau banyak baris per RFID (misal CSV harian),
     // ambil baris terakhir per SKU supaya data paling fresh
     const deduped: Map<string, any> = new Map()
@@ -182,12 +185,14 @@ router.post('/import', upload.single('file'), async (req: AuthRequest, res: Resp
         const supplierId = String(row['Supplier_Code'] || row['supplierId'] || row['Supplier'] || '').trim()
 
         // Upsert: sama userId + rfid → update, baru → insert
+        // importSession disimpan untuk fitur undo — bisa hapus semua item dari satu sesi import
         await InventoryItem.findOneAndUpdate(
           { userId: req.userId, rfid },
           {
             $set: {
               userId: req.userId, rfid, name, category, zone, shelf,
               quantity, unitPrice, fillLevel, weight, unit, expiryDate, supplierId,
+              importSession: sessionId,  // tag sesi import untuk undo
             }
           },
           { upsert: true, new: true, setDefaultsOnInsert: true }
@@ -207,7 +212,7 @@ router.post('/import', upload.single('file'), async (req: AuthRequest, res: Resp
 
     res.json({
       success: true,
-      data: { imported, skipped, total: rows.length, errors },
+      data: { imported, skipped, total: rows.length, errors, sessionId },  // kirim sessionId ke frontend
     })
   } catch (err: any) {
     await ImportLog.create({
@@ -215,6 +220,33 @@ router.post('/import', upload.single('file'), async (req: AuthRequest, res: Resp
       imported, skipped, total: 0, status: 'error',
     }).catch(() => {})
     res.status(500).json({ success: false, error: `Import gagal: ${err.message}` })
+  }
+})
+
+// ── DELETE /api/inventory/import-session/:sessionId — batalkan/undo import ──
+// Hapus semua item yang ditambahkan dari satu sesi import tertentu.
+// Hanya bisa dibatalkan kalau item masih ada (belum diedit manual).
+router.delete('/import-session/:sessionId', async (req: AuthRequest, res: Response) => {
+  try {
+    const { sessionId } = req.params
+    if (!sessionId) return res.status(400).json({ success: false, error: 'Session ID diperlukan' })
+
+    const result = await InventoryItem.deleteMany({
+      userId: req.userId,
+      importSession: sessionId,
+    })
+
+    if (result.deletedCount === 0) {
+      return res.json({ success: false, error: 'Tidak ada item yang ditemukan dari sesi import ini (mungkin sudah dihapus atau diedit)' })
+    }
+
+    res.json({
+      success: true,
+      deleted: result.deletedCount,
+      message: `${result.deletedCount} item dari sesi import berhasil dihapus`,
+    })
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message })
   }
 })
 
