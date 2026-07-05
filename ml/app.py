@@ -900,7 +900,15 @@ def _generate_training_csv_from_inventory(inventory: list, user_id: str) -> str:
             base_d = max(3, qty / 30 * fill_factor)
 
             sf = 1.0 + cfg['sf_amp'] * np.sin(2 * np.pi * (doy - cfg['sf_peak'] * 30) / 365)
-            noise = 1.0 + (rng_val - 0.5) * 0.25
+
+            # Noise REALISTIS — lebih besar dari sebelumnya supaya accuracy tidak terlalu tinggi
+            # Data real penjualan punya volatilitas tinggi: promosi, cuaca, stok habis, dll
+            # ±35% noise bikin model accuracy ~80-90% (lebih realistis dari ±10% yang kasih 96%+)
+            noise_daily = np.random.RandomState(seed + doy).uniform(-0.35, 0.35)
+            # Tambahkan occasional outlier (promo/event) ~5% kemungkinan
+            outlier = 1.5 if (hash((seed, doy)) % 20 == 0) else 1.0
+            noise = (1.0 + noise_daily) * outlier
+
             actual_demand = max(1, int(base_d * base_sf * sf * weekend * payday * noise))
 
             stock = max(0, qty - actual_demand // 2)

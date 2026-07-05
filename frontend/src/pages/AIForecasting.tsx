@@ -285,7 +285,7 @@ export default function AIForecasting() {
       {/* KPI */}
       <div className="grid grid-cols-4 gap-4 mb-5">
         {/* Accuracy — baca dari mlStats, bukan tunggu chart load */}
-        <div className="kpi-card">
+        <div className="kpi-card" title={mlStats?.demand_accuracy ? `Akurasi diukur dari 15% data sintetis yang di-generate dari pola inventory kamu (bukan dari transaksi penjualan real). MAPE = ${mlStats.demand_mape}%` : ''}>
           <div className="text-xs text-slate-500 dark:text-slate-400">Forecast Accuracy</div>
           <div className={`text-2xl font-semibold ${
             mlStats?.demand_accuracy != null ? 'text-green-600' : 'text-slate-400'
@@ -295,7 +295,7 @@ export default function AIForecasting() {
           <div className="text-xs text-slate-400">
             {mlStats?.demand_accuracy != null
               ? `MAPE ${mlStats.demand_mape ?? '?'}% · ${mlStats.online ? 'Live' : 'Cached'}`
-              : mlStats ? 'Belum ada data training' : 'Memuat…'}
+              : mlStats?.data_source === 'not_trained' ? 'Belum di-training' : 'Memuat…'}
           </div>
         </div>
 

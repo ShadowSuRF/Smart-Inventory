@@ -124,6 +124,12 @@ router.get('/predictions', async (req: AuthRequest, res: Response) => {
   )
 
   if (ml?.success && Array.isArray(ml.data)) {
+    // Baca akurasi BENERAN dari MongoDB UserMLModel, bukan hardcode 94.2
+    const userModel = await UserMLModel.findOne({ userId: uid })
+      .select('demandAccuracy demandMape')
+    const realAcc  = userModel?.demandAccuracy ?? null
+    const realMape = userModel?.demandMape ?? null
+
     const mlPreds = ml.data.map((m: any) => ({
       month:      m.label,
       actual:     null,
@@ -133,8 +139,15 @@ router.get('/predictions', async (req: AuthRequest, res: Response) => {
     }))
     return res.json({
       success: true,
-      data: { predictions: mlPreds, horizon, accuracy: 94.2, mape: 5.8, source: 'ml',
-              inventory_count: items.length }
+      data: {
+        predictions:  mlPreds,
+        horizon,
+        accuracy:     realAcc,   // dari model yg dilatih user, bukan hardcode
+        mape:         realMape,
+        source:       'ml',
+        inventory_count: items.length,
+        note:         realAcc ? `Akurasi diukur dari data sintetis ${(userModel as any)?.trainingRows?.toLocaleString() || ''} rows` : null,
+      }
     })
   }
 
@@ -251,7 +264,10 @@ router.get('/item/:itemId', async (req: AuthRequest, res: Response) => {
       res.json({
         success: true,
         data: {
-          item: itemInfo, predictions, horizon, accuracy: 94.2, mape: 5.8,
+          item: itemInfo, predictions, horizon,
+          // Akurasi dari model yang beneran dilatih user (bukan hardcode 94.2)
+          accuracy: (await UserMLModel.findOne({ userId: uid }).select('demandAccuracy'))?.demandAccuracy ?? null,
+          mape:     (await UserMLModel.findOne({ userId: uid }).select('demandMape'))?.demandMape ?? null,
           avgDailyDemand, stockoutDays, stockoutRisk: stockoutRisk(stockoutDays),
           source: 'ml',
         },
