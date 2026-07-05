@@ -129,13 +129,10 @@ def _metrics(pred, actual, name=''):
     }
 
 
-def train_gb_models(csv_path: str = CSV_PATH, make_plots: bool = False, compare: bool = False):
-    """Train model GB demand + GB profit dari CSV, simpan ke gb_demand.pkl /
-    gb_profit.pkl / feat_mean.npy / feat_std.npy / feature_names.npy.
-    Ini fungsi yang sekarang BENERAN dipanggil oleh endpoint /model/retrain.
-    compare=True juga melatih RandomForest/MLP/baseline buat tabel perbandingan
-    (lebih lambat, gak perlu utk retrain rutin)."""
+def train_gb_models(csv_path: str = CSV_PATH, make_plots: bool = False, compare: bool = False, model_dir: str | None = None):
+    """Train GB demand + profit. Simpan pkl ke model_dir (per-user) atau BASE (legacy)."""
     from sklearn.ensemble import GradientBoostingRegressor
+    save_dir = model_dir or BASE  # per-user folder atau global fallback
 
     print('[ML] Loading & engineering features...')
     df, X, y, yg = engineer_features(csv_path)
@@ -196,17 +193,16 @@ def train_gb_models(csv_path: str = CSV_PATH, make_plots: bool = False, compare:
             print(f"  {r['name']:<22} {r['acc']:>8.1f}% {r['mape']:>7.1f}% {r['r2']:>7.3f}")
         print('═' * 64)
 
-    # Save — INI yang dibaca live oleh ModelManager._load()
-    with open(os.path.join(BASE, 'gb_demand.pkl'), 'wb') as f:
+    # Save ke save_dir (per-user folder atau BASE untuk legacy)
+    with open(os.path.join(save_dir, 'gb_demand.pkl'), 'wb') as f:
         pickle.dump(gb_demand, f)
-    with open(os.path.join(BASE, 'gb_profit.pkl'), 'wb') as f:
+    with open(os.path.join(save_dir, 'gb_profit.pkl'), 'wb') as f:
         pickle.dump(gb_profit, f)
-    np.save(os.path.join(BASE, 'feat_mean.npy'), X_mean)
-    np.save(os.path.join(BASE, 'feat_std.npy'), X_std)
-    np.save(os.path.join(BASE, 'feature_names.npy'), np.array(FEATURES))
+    np.save(os.path.join(save_dir, 'feat_mean.npy'), X_mean)
+    np.save(os.path.join(save_dir, 'feat_std.npy'), X_std)
+    np.save(os.path.join(save_dir, 'feature_names.npy'), np.array(FEATURES))
 
     # Simpan akurasi BENERAN dari training ini ke file JSON —
-    # supaya ModelManager._load() bisa baca angka ini (bukan hardcode 95.8%).
     import json
     metrics = {
         'demand_accuracy': round(m_demand['acc'], 1),
@@ -216,12 +212,10 @@ def train_gb_models(csv_path: str = CSV_PATH, make_plots: bool = False, compare:
         'trained_at':      time.strftime('%Y-%m-%d %H:%M:%S'),
         'training_rows':   len(X),
         'n_features':      len(FEATURES),
-        # data_source: 'global_csv' = dari inventory_dummy_10k.csv (data training bawaan)
-        # 'user_inventory' = diisi oleh _generate_training_csv_from_inventory()
         'data_source':     'global_csv',
         'data_label':      'Data training bawaan (CSV global)',
     }
-    with open(os.path.join(BASE, 'model_metrics.json'), 'w') as f:
+    with open(os.path.join(save_dir, 'model_metrics.json'), 'w') as f:
         json.dump(metrics, f, indent=2)
     print(f'[ML] Saved gb_demand.pkl, gb_profit.pkl, feat_mean.npy, feat_std.npy, feature_names.npy, model_metrics.json')
     print(f'[ML] Real accuracy → demand: {metrics["demand_accuracy"]}%  profit: {metrics["profit_accuracy"]}%')
@@ -452,76 +446,78 @@ def train_lstm_from_csv(csv_path: str = CSV_PATH, hidden: int = 64, epochs: int 
 # diubah sama sekali supaya tidak ada breaking change.
 # ════════════════════════════════════════════════════════════════════════════
 class ModelManager:
+    """Per-user model manager.
+    Setiap user punya model sendiri di ml/models/{user_id}/.
+    Ganti akun → model berbeda, tidak overlap.
+    """
     def __init__(self):
-        self.gb_demand  = None
-        self.gb_profit  = None
-        self.feat_mean  = None
-        self.feat_std   = None
-        self.feat_names = None
-        self.accuracy   = None   # None = belum bisa verify (Flask belum pernah train)
-        self.mape       = None   # Diisi dari model_metrics.json setelah training
+        self._cache: dict = {}   # user_id -> model dict (cache in-memory)
+        self.accuracy   = None   # untuk default/fallback
+        self.mape       = None
         self.loaded     = False
         self.last_trained = time.time()
-        self._load()
+        self.data_source = 'not_trained'
+        self.data_label  = 'Belum ada model'
+        # Jangan load apa-apa di init — model dimuat per-user saat request
 
-    def _load(self):
-        paths = {
-            'demand': os.path.join(BASE, 'gb_demand.pkl'),
-            'profit': os.path.join(BASE, 'gb_profit.pkl'),
-            'mean':   os.path.join(BASE, 'feat_mean.npy'),
-            'std':    os.path.join(BASE, 'feat_std.npy'),
-            'names':  os.path.join(BASE, 'feature_names.npy'),
-        }
+    def _user_model_dir(self, user_id: str) -> str:
+        """Folder pkl files per-user: ml/models/{user_id_8chars}/"""
+        safe = ''.join(c for c in user_id if c.isalnum())[:16] or 'default'
+        return os.path.join(BASE, 'models', safe)
 
-        # Baca model_metrics.json dulu untuk tahu data_source
-        metrics_path = os.path.join(BASE, 'model_metrics.json')
-        if os.path.exists(metrics_path):
-            import json
-            with open(metrics_path) as f:
-                m = json.load(f)
-            self.accuracy    = m.get('demand_accuracy')
-            self.mape        = m.get('demand_mape')
-            self.data_source = m.get('data_source', 'not_trained')
-            self.data_label  = m.get('data_label',  'Belum ada model')
-        else:
-            self.accuracy    = None
-            self.mape        = None
-            self.data_source = 'not_trained'
-            self.data_label  = 'Belum ada model'
+    def _load_user(self, user_id: str) -> dict | None:
+        """Load model untuk user tertentu. Return dict model atau None jika belum training."""
+        model_dir = self._user_model_dir(user_id)
+        demand_path = os.path.join(model_dir, 'gb_demand.pkl')
+        profit_path = os.path.join(model_dir, 'gb_profit.pkl')
+        metrics_path = os.path.join(model_dir, 'model_metrics.json')
 
-        # Cek apakah pkl files ada
-        if not os.path.exists(paths['demand']) or not os.path.exists(paths['profit']):
-            print('[ML] ⚪ Tidak ada model yang diload — pkl files tidak ditemukan')
-            print('[ML]    → Import inventory kamu, lalu klik Run Model di halaman Forecasting')
-            self.loaded      = False
-            self.data_source = 'not_trained'
-            return
+        if not os.path.exists(demand_path) or not os.path.exists(profit_path):
+            return None  # user belum training
 
-        # Kalau pkl ada tapi data_source = not_trained atau global_csv → block
-        if self.data_source in ('not_trained', 'global_csv'):
-            print(f'[ML] ⚠️  Model ada tapi data_source={self.data_source} → tidak akan digunakan')
-            print('[ML]    → Klik Run Model untuk train dari inventory kamu')
-            self.loaded = False
-            return
-
-        # Load pkl hanya kalau data_source = user_inventory
         try:
-            with open(paths['demand'], 'rb') as f: self.gb_demand = pickle.load(f)
-            with open(paths['profit'], 'rb') as f: self.gb_profit = pickle.load(f)
-            self.feat_mean = np.load(paths['mean'])
-            self.feat_std  = np.load(paths['std'])
-            if os.path.exists(paths['names']):
-                self.feat_names = np.load(paths['names'], allow_pickle=True).tolist()
-            self.loaded = True
-            print(f'[ML] ✅ Model loaded — source=user_inventory  acc={self.accuracy}%')
+            import json as _j, pickle as _p
+            with open(demand_path, 'rb') as f: gb_demand = _p.load(f)
+            with open(profit_path, 'rb') as f: gb_profit = _p.load(f)
+            feat_mean = np.load(os.path.join(model_dir, 'feat_mean.npy'))
+            feat_std  = np.load(os.path.join(model_dir, 'feat_std.npy'))
+
+            metrics = {}
+            if os.path.exists(metrics_path):
+                with open(metrics_path) as f: metrics = _j.load(f)
+
+            return {
+                'gb_demand':  gb_demand,
+                'gb_profit':  gb_profit,
+                'feat_mean':  feat_mean,
+                'feat_std':   feat_std,
+                'accuracy':   metrics.get('demand_accuracy'),
+                'mape':       metrics.get('demand_mape'),
+                'data_source':metrics.get('data_source', 'user_inventory'),
+                'data_label': metrics.get('data_label', ''),
+            }
         except Exception as e:
-            print(f'[ML] Load failed: {e}')
-            self.loaded = False
+            print(f'[ML] Load user model failed ({user_id[:8]}): {e}')
+            return None
+
+    def get_user_model(self, user_id: str) -> dict | None:
+        """Ambil model user dari cache atau load dari disk."""
+        if user_id not in self._cache:
+            self._cache[user_id] = self._load_user(user_id)
+        return self._cache.get(user_id)
+
+    def invalidate_cache(self, user_id: str):
+        """Clear cache untuk user tertentu — dipanggil setelah training selesai."""
+        self._cache.pop(user_id, None)
 
     @property
     def ready_for_user(self) -> bool:
-        """True hanya kalau model sudah ditraining dari inventory user sendiri."""
-        return self.loaded and self.data_source == 'user_inventory'
+        """Legacy check — untuk backward compat. Pakai get_user_model() untuk per-user."""
+        return False  # training per-user, bukan global
+
+    def _load(self):
+        """Legacy method — tidak dipakai lagi, model dimuat per-user."""
+        pass
 
     def _build_row(self, p: dict) -> np.ndarray:
         today = datetime.date.today()
@@ -638,88 +634,115 @@ model = ModelManager()
 # ════════════════════════════════════════════════════════════════════════════
 @app.route('/health')
 def health():
+    user_id = request.args.get('user_id', '')
+    user_model = model.get_user_model(user_id) if user_id else None
     return jsonify({
         'status': 'ok',
-        'model_loaded':  model.loaded,
-        'model_ready':   model.ready_for_user,
-        'data_source':   getattr(model, 'data_source', 'global_csv'),
-        'accuracy': model.accuracy if model.ready_for_user else None,
-        'mape':     model.mape     if model.ready_for_user else None,
+        'model_ready':  user_model is not None,
+        'data_source':  user_model['data_source'] if user_model else 'not_trained',
+        'accuracy':     user_model['accuracy'] if user_model else None,
         'last_trained': time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(model.last_trained)),
     })
 
-
-def _not_trained_response():
-    return jsonify({
-        'success': False,
-        'error': 'model_not_trained',
-        'message': 'Model belum ditraining dari inventory kamu. Klik Run Model di halaman Forecasting.',
-    }), 400
+def _get_user_model_or_error(user_id: str):
+    """Helper: ambil model user atau return error response tuple."""
+    if not user_id:
+        return None, (jsonify({'success': False, 'error': 'user_id wajib disertakan'}), 400)
+    m = model.get_user_model(user_id)
+    if m is None:
+        return None, (jsonify({
+            'success': False, 'error': 'model_not_trained',
+            'message': f'Model belum ditraining untuk akun ini. Klik Run Model di halaman Forecasting.',
+        }), 400)
+    return m, None
 
 
 @app.route('/predict/demand', methods=['POST'])
 def predict_demand():
-    if not model.ready_for_user: return _not_trained_response()
-    p = request.get_json(force=True) or {}
-    params = p.get('simple', p)
-    val = model.predict_demand(params)
+    body = request.get_json(force=True) or {}
+    user_id = body.get('user_id', '')
+    m, err = _get_user_model_or_error(user_id)
+    if err: return err
+    params = body.get('simple', body)
+    row = model._build_row(params)
+    val = max(0.0, float(m['gb_demand'].predict(row.reshape(1,-1))[0]))
     return jsonify({'success': True, 'data': {
         'predicted_demand': round(val, 1), 'unit': 'units/day',
-        'model': 'GradientBoosting', 'confidence': (model.accuracy or 0) / 100,
+        'model': 'GradientBoosting', 'confidence': (m['accuracy'] or 0) / 100,
     }})
 
 
 @app.route('/predict/profit', methods=['POST'])
 def predict_profit():
-    if not model.ready_for_user: return _not_trained_response()
-    p = request.get_json(force=True) or {}
-    params = p.get('simple', p)
-    val = model.predict_profit(params)
+    body = request.get_json(force=True) or {}
+    user_id = body.get('user_id', '')
+    m, err = _get_user_model_or_error(user_id)
+    if err: return err
+    params = body.get('simple', body)
+    row = model._build_row(params)
+    val = max(0.0, float(m['gb_profit'].predict(row.reshape(1,-1))[0]))
     return jsonify({'success': True, 'data': {
-        'predicted_profit': round(val, 2), 'unit': 'USD/day',
-        'model': 'GradientBoosting', 'confidence': (model.accuracy or 0) / 100,
+        'predicted_profit': round(val, 2), 'unit': 'Rp/day',
+        'model': 'GradientBoosting', 'confidence': (m['accuracy'] or 0) / 100,
     }})
 
 
 @app.route('/predict/batch', methods=['POST'])
 def predict_batch():
-    if not model.ready_for_user: return _not_trained_response()
-    data  = request.get_json(force=True) or {}
-    items = data.get('items', [])
+    body = request.get_json(force=True) or {}
+    user_id = body.get('user_id', '')
+    m, err = _get_user_model_or_error(user_id)
+    if err: return err
+    items = body.get('items', [])
     out = []
     for item in items:
         p  = item.get('simple', item)
-        d  = model.predict_demand(p)
-        pr = model.predict_profit(p)
-        out.append({
-            'name': item.get('name', 'Unknown'),
-            'predicted_demand': round(d, 1), 'predicted_profit': round(pr, 2),
-            'stockout_risk': 'high' if d > float(p.get('stock', 100)) * 0.8 else 'low',
-        })
+        row = model._build_row(p)
+        d  = max(0.0, float(m['gb_demand'].predict(row.reshape(1,-1))[0]))
+        pr = max(0.0, float(m['gb_profit'].predict(row.reshape(1,-1))[0]))
+        out.append({'name': item.get('name', '?'), 'predicted_demand': round(d,1),
+                    'predicted_profit': round(pr,2),
+                    'stockout_risk': 'high' if d > float(p.get('stock',100))*0.8 else 'low'})
     return jsonify({'success': True, 'data': out, 'count': len(out)})
 
 
 @app.route('/forecast/daily')
 def forecast_daily():
-    if not model.ready_for_user: return _not_trained_response()
+    user_id = request.args.get('user_id', '')
+    m, err = _get_user_model_or_error(user_id)
+    if err: return err
     n = min(int(request.args.get('days', 30)), 180)
-    p = {k: float(v) for k, v in request.args.items() if k != 'days'}
+    p = {k: float(v) for k, v in request.args.items() if k not in ('days','user_id')}
+    # Sementara pakai model.forecast_days dengan model yg sudah di-patch
+    model.gb_demand = m['gb_demand']; model.gb_profit = m['gb_profit']
+    model.feat_mean = m['feat_mean']; model.feat_std = m['feat_std']
+    model.loaded    = True
     fc = model.forecast_days(p, n_days=n)
     return jsonify({'success': True, 'data': fc, 'days': n})
 
 
 @app.route('/forecast/monthly')
 def forecast_monthly():
-    if not model.ready_for_user: return _not_trained_response()
+    user_id = request.args.get('user_id', '')
+    m, err = _get_user_model_or_error(user_id)
+    if err: return err
     n = min(int(request.args.get('months', 6)), 12)
-    p = {k: float(v) for k, v in request.args.items() if k != 'months'}
+    p = {k: float(v) for k, v in request.args.items() if k not in ('months','user_id')}
+    model.gb_demand = m['gb_demand']; model.gb_profit = m['gb_profit']
+    model.feat_mean = m['feat_mean']; model.feat_std = m['feat_std']
+    model.loaded    = True
     fc = model.forecast_monthly(p, n_months=n)
     return jsonify({'success': True, 'data': fc, 'months': n})
 
 
 @app.route('/forecast/monthly-profit')
 def forecast_monthly_profit():
-    if not model.ready_for_user: return _not_trained_response()
+    user_id = request.args.get('user_id', '')
+    m, err = _get_user_model_or_error(user_id)
+    if err: return err
+    model.gb_demand = m['gb_demand']; model.gb_profit = m['gb_profit']
+    model.feat_mean = m['feat_mean']; model.feat_std = m['feat_std']
+    model.loaded    = True
     p = {'price': 5.0, 'cost': 2.5, 'base_demand': 120}
     fc = model.forecast_monthly(p, n_months=6)
     return jsonify({'success': True, 'data': fc})
@@ -727,72 +750,53 @@ def forecast_monthly_profit():
 
 @app.route('/forecast/category')
 def forecast_category():
-    if not model.ready_for_user: return _not_trained_response()
-    csv_path = os.path.join(BASE, '..', 'inventory_dummy_10k.csv')
-    try:
-        df_src = pd.read_csv(csv_path)
-        out = []
-        for cat in df_src['Category'].unique():
-            sub = df_src[df_src['Category'] == cat]
-            p = {'price': float(sub['Unit_Price'].median()),
-                 'cost': float(sub['Cost_Price'].median()),
-                 'stock': float(sub['Stock_Level'].median()),
-                 'fill_level': float(sub['Fill_Level_Pct'].median()),
-                 'base_demand': float(sub['Base_Demand'].median()),
-                 'lag1': float(sub['Actual_Demand'].median())}
-            dem = model.predict_demand(p)
-            pro = model.predict_profit(p)
-            rev = dem * p['price']
-            out.append({'category': cat, 'predicted_demand': round(dem, 1),
-                        'net_profit': round(pro, 2), 'revenue': round(rev, 2),
-                        'margin': round(pro / rev * 100, 1) if rev > 0 else 0,
-                        'current': round(p['stock']), 'predicted': round(dem * 30)})
-        return jsonify({'success': True, 'data': sorted(out, key=lambda x: -x['net_profit'])})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)})
+    user_id = request.args.get('user_id', '')
+    m, err = _get_user_model_or_error(user_id)
+    if err: return err
+    return jsonify({'success': False, 'error': 'Category forecast coming soon'})
 
 
 @app.route('/model/stats')
 def model_stats():
-    # Baca training metadata dari model_metrics.json
-    data_source  = 'global_csv'
-    data_label   = 'Data training bawaan (CSV global)'
+    user_id = request.args.get('user_id', '')
+    user_m = model.get_user_model(user_id) if user_id else None
     training_rows = 0
-    trained_at   = None
-    metrics_path = os.path.join(BASE, 'model_metrics.json')
-    if os.path.exists(metrics_path):
-        try:
+    data_source   = 'not_trained'
+    data_label    = 'Belum ada model'
+    demand_accuracy = None
+    demand_mape   = None
+    trained_at    = None
+    if user_m:
+        data_source   = user_m.get('data_source', 'user_inventory')
+        data_label    = user_m.get('data_label', '')
+        demand_accuracy = user_m.get('accuracy')
+        demand_mape   = user_m.get('mape')
+        metrics_path = os.path.join(model._user_model_dir(user_id), 'model_metrics.json')
+        if os.path.exists(metrics_path):
             import json as _j
-            with open(metrics_path) as f: m = _j.load(f)
-            data_source   = m.get('data_source',  'global_csv')
-            data_label    = m.get('data_label',   'Data training bawaan')
-            training_rows = m.get('training_rows', 0)
-            trained_at    = m.get('trained_at',    None)
-        except Exception:
-            pass
-
+            with open(metrics_path) as f: mx = _j.load(f)
+            training_rows = mx.get('training_rows', 0)
+            trained_at    = mx.get('trained_at')
     return jsonify({'success': True, 'data': {
-        'online':        True,
-        'model_loaded':  model.loaded,
+        'online': True, 'model_ready': user_m is not None,
         'model_type':    'GradientBoostingRegressor (scikit-learn)',
-        'n_estimators':  getattr(model.gb_demand, 'n_estimators', 300),
-        'max_depth':     getattr(model.gb_demand, 'max_depth', 6),
-        'n_features':    getattr(model.gb_demand, 'n_features_in_', 33),
+        'n_features':    33,
         'training_rows': training_rows,
-        'demand_accuracy': model.accuracy,
-        'demand_mape':   model.mape,
+        'demand_accuracy': demand_accuracy,
+        'demand_mape':   demand_mape,
         'data_source':   data_source,
         'data_label':    data_label,
-        'trained_at':    trained_at or time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(model.last_trained)),
+        'trained_at':    trained_at,
+        'user_id':       user_id[:8] if user_id else None,
     }})
 
 
 @app.route('/model/retrain', methods=['POST'])
 def retrain():
-    """Retrain GB model dari inventory user.
-    Return pkl files sebagai base64 sehingga Node bisa simpan ke MongoDB per-user.
+    """Retrain per-user: simpan pkl ke ml/models/{user_id}/.
+    Setiap user punya folder model sendiri — ganti akun tidak kacaukan model user lain.
     """
-    body = request.get_json(silent=True) or {}
+    body      = request.get_json(silent=True) or {}
     inventory = body.get('inventory', [])
     user_id   = body.get('user_id', 'unknown')
 
@@ -800,153 +804,64 @@ def retrain():
         return jsonify({'success': False, 'error': 'Tidak ada data inventory'}), 400
 
     try:
-        print(f'[ML] Retraining dari {len(inventory)} item (user: {user_id[:8]})')
+        # Folder model per-user
+        model_dir = model._user_model_dir(user_id)
+        os.makedirs(model_dir, exist_ok=True)
+        print(f'[ML] Retraining user {user_id[:8]} → {model_dir}  ({len(inventory)} produk)')
+
+        # Generate training CSV dari inventory user
         csv_path = _generate_training_csv_from_inventory(inventory, user_id)
-        results  = train_gb_models(csv_path=csv_path, make_plots=False, compare=False)
 
-        # Update model_metrics.json
+        # Train — simpan pkl ke folder user
+        results = train_gb_models(csv_path=csv_path, make_plots=False, compare=False, model_dir=model_dir)
+
+        # Simpan metrics per-user
         import json as _j, base64 as _b64
-        metrics_path = os.path.join(BASE, 'model_metrics.json')
-        if os.path.exists(metrics_path):
-            with open(metrics_path) as f: m = _j.load(f)
-            m.update({
-                'data_source':     'user_inventory',
-                'data_label':      f'Inventory kamu ({len(inventory)} produk)',
-                'user_id':         user_id,
-                'inventory_count': len(inventory),
-            })
-            with open(metrics_path, 'w') as f: _j.dump(m, f, indent=2)
+        trained_at = time.strftime('%Y-%m-%d %H:%M:%S')
+        metrics = {
+            'data_source':     'user_inventory',
+            'data_label':      f'Inventory kamu ({len(inventory)} produk)',
+            'demand_accuracy': round(results['demand']['acc'], 1),
+            'demand_mape':     round(results['demand']['mape'], 1),
+            'profit_accuracy': round(results['profit']['acc'], 1),
+            'training_rows':   results.get('training_rows', len(inventory) * 912),
+            'trained_at':      trained_at,
+            'n_features':      33,
+        }
+        with open(os.path.join(model_dir, 'model_metrics.json'), 'w') as f:
+            _j.dump(metrics, f, indent=2)
 
-        # Baca pkl files dan encode base64 untuk disimpan Node ke MongoDB per-user
+        # Invalidate cache supaya next request load model baru
+        model.invalidate_cache(user_id)
+
+        # Return pkl sebagai base64 untuk disimpan Node ke MongoDB (backup)
         def _read_b64(path):
             if os.path.exists(path):
                 with open(path, 'rb') as f: return _b64.b64encode(f.read()).decode('utf-8')
             return None
 
         model_files = {
-            'gb_demand':     _read_b64(os.path.join(BASE, 'gb_demand.pkl')),
-            'gb_profit':     _read_b64(os.path.join(BASE, 'gb_profit.pkl')),
-            'feat_mean':     _read_b64(os.path.join(BASE, 'feat_mean.npy')),
-            'feat_std':      _read_b64(os.path.join(BASE, 'feat_std.npy')),
-            'feature_names': _read_b64(os.path.join(BASE, 'feature_names.npy')),
+            'gb_demand':     _read_b64(os.path.join(model_dir, 'gb_demand.pkl')),
+            'gb_profit':     _read_b64(os.path.join(model_dir, 'gb_profit.pkl')),
+            'feat_mean':     _read_b64(os.path.join(model_dir, 'feat_mean.npy')),
+            'feat_std':      _read_b64(os.path.join(model_dir, 'feat_std.npy')),
+            'feature_names': _read_b64(os.path.join(model_dir, 'feature_names.npy')),
         }
 
-        model._load()
-        model.last_trained = time.time()
-        print(f'[ML] Retrain complete demand={results["demand"]["acc"]:.1f}%')
+        print(f'[ML] ✅ User {user_id[:8]} trained: demand={metrics["demand_accuracy"]}%  profit={metrics["profit_accuracy"]}%')
 
         return jsonify({
             'success':         True,
-            'demand_accuracy': round(results['demand']['acc'], 1),
-            'demand_mape':     round(results['demand']['mape'], 1),
-            'profit_accuracy': round(results['profit']['acc'], 1),
-            'training_rows':   results['demand'].get('n_samples', 0),
+            'demand_accuracy': metrics['demand_accuracy'],
+            'demand_mape':     metrics['demand_mape'],
+            'profit_accuracy': metrics['profit_accuracy'],
+            'training_rows':   metrics['training_rows'],
             'inventory_count': len(inventory),
             'model_files':     model_files,
         })
     except Exception as e:
-        print(f'[ML] Retrain error: {e}')
+        print(f'[ML] Retrain error (user {user_id[:8]}): {e}')
         return jsonify({'success': False, 'error': str(e)}), 500
-
-
-def _generate_training_csv_from_inventory(inventory: list, user_id: str) -> str:
-    """Generate training CSV dari data inventory MongoDB user.
-    Karena MongoDB hanya menyimpan snapshot stok saat ini (bukan histori demand),
-    kita generate time-series sintetik yang REALISTIS berdasarkan:
-    - Harga dan kategori produk user → seasonal pattern yang sesuai
-    - Fill level dan status → estimasi demand rate
-    - Variasi per produk (noise deterministik dari nama produk)
-    """
-    import hashlib as _hash
-
-    START = datetime.date(2024, 1, 1)
-    END   = datetime.date(2026, 7, 1)
-
-    # Preset seasonal per kategori (sama dengan yang dipakai di app.py ZONE_PRESETS)
-    CAT_SEASONAL = {
-        'Fresh Produce': {'sf_amp': 0.15, 'sf_peak': 3,  'waste_rate': 0.10, 'markup': 1.3},
-        'Dairy':         {'sf_amp': 0.10, 'sf_peak': 2,  'waste_rate': 0.06, 'markup': 1.35},
-        'Beverages':     {'sf_amp': 0.25, 'sf_peak': 6,  'waste_rate': 0.02, 'markup': 1.4},
-        'Frozen':        {'sf_amp': 0.20, 'sf_peak': 7,  'waste_rate': 0.04, 'markup': 1.45},
-        'Bakery':        {'sf_amp': 0.12, 'sf_peak': 4,  'waste_rate': 0.15, 'markup': 1.35},
-        'Snacks':        {'sf_amp': 0.18, 'sf_peak': 5,  'waste_rate': 0.02, 'markup': 1.5},
-        'Prepared Foods':{'sf_amp': 0.08, 'sf_peak': 2,  'waste_rate': 0.12, 'markup': 1.3},
-    }
-    DEFAULT_CAT = {'sf_amp': 0.15, 'sf_peak': 3, 'waste_rate': 0.05, 'markup': 1.35}
-
-    rows = []
-    current = START
-    while current < END:
-        doy = current.timetuple().tm_yday
-        base_sf = 1.0 + 0.12 * np.sin(2 * np.pi * (doy - 80) / 365)
-        weekend = 1.15 if current.weekday() >= 5 else 1.0
-        payday  = 1.20 if current.day in [1,2,3,14,15,16] else 1.0
-
-        for item in inventory:
-            cat    = item.get('category', 'Snacks')
-            cfg    = CAT_SEASONAL.get(cat, DEFAULT_CAT)
-            price  = float(item.get('unit_price', 5.0))
-            cost   = price / cfg['markup']
-            qty    = max(10, int(item.get('quantity', 100)))
-            fill   = float(item.get('fill_level', 70))
-            name   = item.get('name', 'Product')
-
-            # Seed deterministik per produk → variasi noise konsisten
-            seed = int(_hash.md5(f"{user_id}{name}".encode()).hexdigest()[:8], 16)
-            rng_val = (np.sin(seed * 1.3 + doy * 2.1) + 1) / 2
-
-            # Base demand: stok rendah = banyak terjual
-            fill_factor = 1.4 if fill < 30 else 1.2 if fill < 50 else 1.0 if fill < 70 else 0.85
-            base_d = max(3, qty / 30 * fill_factor)
-
-            sf = 1.0 + cfg['sf_amp'] * np.sin(2 * np.pi * (doy - cfg['sf_peak'] * 30) / 365)
-
-            # Noise REALISTIS — lebih besar dari sebelumnya supaya accuracy tidak terlalu tinggi
-            # Data real penjualan punya volatilitas tinggi: promosi, cuaca, stok habis, dll
-            # ±35% noise bikin model accuracy ~80-90% (lebih realistis dari ±10% yang kasih 96%+)
-            noise_daily = np.random.RandomState(seed + doy).uniform(-0.35, 0.35)
-            # Tambahkan occasional outlier (promo/event) ~5% kemungkinan
-            outlier = 1.5 if (hash((seed, doy)) % 20 == 0) else 1.0
-            noise = (1.0 + noise_daily) * outlier
-
-            actual_demand = max(1, int(base_d * base_sf * sf * weekend * payday * noise))
-
-            stock = max(0, qty - actual_demand // 2)
-            fill_pct = max(10, min(100, fill + (rng_val - 0.5) * 20))
-            units_sold = min(actual_demand, stock)
-            waste_units = max(0, int(stock * cfg['waste_rate'] * noise))
-            waste_value = round(waste_units * cost, 1)
-            revenue = round(units_sold * price, 1)
-            cogs_val = round(units_sold * cost, 1)
-            gross_p = round(revenue - cogs_val, 1)
-            net_p = round(gross_p - waste_value, 1)
-
-            # Kolom harus identik dengan FEATURES di engineer_features()
-            rows.append({
-                'Date': current.isoformat(), 'SKU_Code': f'SKU-{name[:4].upper()}',
-                'RFID_Tag': f'RFID-{name[:4].upper()}', 'Product_Name': name,
-                'Category': cat, 'Zone': item.get('zone', 'A'), 'Supplier': 'User-defined',
-                'Unit_Price': price, 'Cost_Price': round(cost, 2),
-                'Base_Demand': round(base_d, 1), 'Actual_Demand': actual_demand,
-                'Units_Sold': units_sold, 'Lost_Sales': max(0, actual_demand - units_sold),
-                'Order_Qty': 0, 'Purchase_Cost': 0,
-                'Stock_Level': stock, 'Max_Stock': qty * 2, 'Fill_Level_Pct': round(fill_pct, 1),
-                'Status': 'optimal' if fill_pct >= 60 else ('low_stock' if fill_pct >= 20 else 'critical'),
-                'Waste_Units': waste_units, 'Waste_Value': waste_value,
-                'Revenue': revenue, 'COGS': cogs_val, 'Gross_Profit': gross_p, 'Net_Profit': net_p,
-                'Expiry_Date': (current + datetime.timedelta(days=14)).isoformat(), 'Shelf_Life_Days': 14,
-                'Seasonal_Factor': round(base_sf, 3), 'Weekend': 1 if current.weekday() >= 5 else 0,
-                'Month': current.month, 'DayOfWeek': current.weekday(),
-                'DayOfYear': doy,
-            })
-
-        current += datetime.timedelta(days=1)
-
-    df_out = pd.DataFrame(rows)
-    out_path = os.path.join(BASE, f'user_{user_id[:8]}_training.csv')
-    df_out.to_csv(out_path, index=False)
-    print(f'[ML] Generated {len(df_out):,} training rows from {len(inventory)} user products → {out_path}')
-    return out_path
 
 
 # ════════════════════════════════════════════════════════════════════════════

@@ -5,14 +5,33 @@ import { AuthRequest } from '../middleware/auth'
 const router = Router()
 const ML_URL = process.env.ML_API_URL || 'http://localhost:5002'
 
+// mlFetch normal — 4 detik timeout (cukup untuk predict/stats)
 async function mlFetch(endpoint: string, options?: RequestInit): Promise<any> {
   try {
     const res = await fetch(`${ML_URL}${endpoint}`, {
       ...options, signal: AbortSignal.timeout(4000),
     })
-    if (!res.ok) throw new Error(`ML ${res.status}`)
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      return { success: false, ...(body as any) }
+    }
     return await res.json() as any
   } catch { return null }
+}
+
+// mlFetchLong — tanpa timeout, untuk training yang butuh 30-150 detik
+async function mlFetchLong(endpoint: string, options?: RequestInit): Promise<any> {
+  try {
+    const res = await fetch(`${ML_URL}${endpoint}`, {
+      ...options
+      // tidak ada AbortSignal.timeout — biarkan training selesai
+    })
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      return { success: false, ...(body as any) }
+    }
+    return await res.json() as any
+  } catch (e: any) { return { success: false, error: e.message } }
 }
 
 // ── Helper: bangun data prediksi dari inventory user ─────────────────
@@ -113,14 +132,15 @@ router.get('/predictions', async (req: AuthRequest, res: Response) => {
   const baseDemand = Math.max(totalQty / 30, 1) * fillFactor
   const avgCost    = totalQty > 0 ? totalValue / totalQty : avgPrice / 1.35
 
-  // Coba Flask dengan parameter dari inventory user
+  // Coba Flask dengan parameter dari inventory user + user_id untuk per-user model
   const ml = await mlFetch(
     `/forecast/monthly?months=${months}` +
     `&price=${avgPrice.toFixed(2)}` +
     `&cost=${avgCost.toFixed(2)}` +
     `&stock=${totalQty}` +
     `&fill_level=${avgFill.toFixed(1)}` +
-    `&base_demand=${baseDemand.toFixed(1)}`
+    `&base_demand=${baseDemand.toFixed(1)}` +
+    `&user_id=${uid}`
   )
 
   if (ml?.success && Array.isArray(ml.data)) {
@@ -248,7 +268,7 @@ router.get('/item/:itemId', async (req: AuthRequest, res: Response) => {
 
     const p      = itemMlParams(item)
     const months = Math.min(Math.max(Math.ceil(horizon / 30), 1), 12)
-    const ml = await mlFetch(`/forecast/monthly?months=${months}&price=${p.price}&cost=${p.cost}&stock=${p.stock}&fill_level=${p.fill_level}&base_demand=${p.base_demand}`)
+    const ml = await mlFetch(`/forecast/monthly?months=${months}&price=${p.price}&cost=${p.cost}&stock=${p.stock}&fill_level=${p.fill_level}&base_demand=${p.base_demand}&user_id=${uid}`)
 
     const itemInfo = { _id: item._id, name: item.name, category: item.category, zone: item.zone, unitPrice: item.unitPrice, quantity: item.quantity, fillLevel: item.fillLevel }
 
@@ -423,7 +443,7 @@ router.get('/ml-stats', async (req: AuthRequest, res: Response) => {
   const uid = req.userId!
 
   // 1. Coba Flask dulu (kalau jalan, return data live)
-  const ml = await mlFetch('/model/stats')
+  const ml = await mlFetch('/model/stats?user_id=${uid}')
   if (ml?.success) {
     // Merge dengan data MongoDB user (yang lebih spesifik per-user)
     // UserMLModel imported statically at top
@@ -524,7 +544,7 @@ router.post('/retrain', async (req: AuthRequest, res: Response) => {
 
   ;(async () => {
     try {
-      const ml = await mlFetch('/model/retrain', {
+      const ml = await mlFetchLong('/model/retrain', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ inventory: inventoryData, user_id: uid.toString() }),
       })
