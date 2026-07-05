@@ -570,7 +570,7 @@ export default function AIForecasting() {
               <XAxis dataKey="month" tick={{ fontSize: 11 }} />
               {/* domain: min-10% sampai max+10% supaya variasi terlihat jelas */}
               <YAxis tick={{ fontSize: 11 }}
-                tickFormatter={v => v >= 1000 ? `${(v/1000).toFixed(1)}K` : String(v)}
+                tickFormatter={v => fmtRp(v)}
                 domain={[(dataMin: number) => Math.floor(dataMin * 0.88), (dataMax: number) => Math.ceil(dataMax * 1.08)]}
               />
               <Tooltip formatter={(v: any) => v != null ? v.toLocaleString() : '-'} />

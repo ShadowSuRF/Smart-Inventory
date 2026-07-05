@@ -4,6 +4,7 @@ import Modal from '../components/ui/Modal'
 import { Spinner } from '../components/ui/PageLoader'
 import type { InventoryItem } from '../types'
 import { statusColor, formatCurrency } from '../lib/utils'
+import { fmtRp } from '../lib/currency'
 import toast from 'react-hot-toast'
 
 const CATS = ['Fresh Produce','Dairy','Beverages','Frozen','Bakery','Snacks','Prepared Foods']
@@ -35,11 +36,11 @@ function ItemCard({ item, onEdit, onDelete, idx }:
         </div>
         <div className="bg-slate-50 dark:bg-slate-700/50 rounded-lg p-1.5">
           <div className="text-xs text-slate-400">Harga</div>
-          <div className="font-bold text-sm">${item.unitPrice}</div>
+          <div className="font-bold text-sm">{fmtRp(item.unitPrice)}</div>
         </div>
         <div className="bg-slate-50 dark:bg-slate-700/50 rounded-lg p-1.5">
           <div className="text-xs text-slate-400">Nilai</div>
-          <div className="font-bold text-sm">{formatCurrency(item.quantity*item.unitPrice)}</div>
+          <div className="font-bold text-sm">{fmtRp(item.quantity * item.unitPrice)}</div>
         </div>
       </div>
 

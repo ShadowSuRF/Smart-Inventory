@@ -174,7 +174,7 @@ export default function Dashboard() {
         <div className="grid grid-cols-4 gap-4">
           <KpiBox label="Waste Prevented" value={formatCurrency(stats?.wastePrevented||0)} icon="♻️" color="text-green-600" idx={0}/>
           <KpiBox label="CO₂ Saved"       value={`${stats?.co2Saved||0} kg`}               icon="🌍" color="text-teal-600" idx={1}/>
-          <KpiBox label="Forecast Acc."   value={`${stats?.forecastAccuracy||94.2}%`}       icon="🧠" color="text-purple-600" idx={2}/>
+          <KpiBox label="Forecast Acc."   value={stats?.forecastAccuracy ? `${stats.forecastAccuracy}%` : '—'}       icon="🧠" color="text-purple-600" idx={2}/>
           <KpiBox label="Active Orders"   value={stats?.activeOrders||0}                    icon="🚚" idx={3}/>
         </div>
       )}

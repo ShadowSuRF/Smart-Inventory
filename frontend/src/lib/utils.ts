@@ -2,10 +2,12 @@ import { clsx, type ClassValue } from 'clsx'
 
 export const cn = (...inputs: ClassValue[]) => clsx(inputs)
 
+// Format Rupiah — gunakan id-ID locale supaya pakai titik sebagai pemisah ribuan
+// Contoh: formatCurrency(15000) → "Rp 15.000"
 export const formatCurrency = (v: number) =>
-  new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(v)
+  `Rp ${Math.abs(v).toLocaleString('id-ID', { maximumFractionDigits: 0 })}`
 
-export const formatNumber = (v: number) => new Intl.NumberFormat('en-US').format(v)
+export const formatNumber = (v: number) => new Intl.NumberFormat('id-ID').format(v)
 
 export const fillColor = (f: number) =>
   f >= 60 ? 'bg-green-500' : f >= 30 ? 'bg-amber-500' : 'bg-red-500'

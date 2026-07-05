@@ -7,6 +7,7 @@ import {
 import Modal from '../components/ui/Modal'
 import type { Supplier } from '../types'
 import { priorityBadge } from '../lib/utils'
+import { fmtRp } from '../lib/currency'
 import toast from 'react-hot-toast'
 
 type OrderStatus = 'pending' | 'ordered' | 'completed' | 'cancelled'
@@ -270,7 +271,7 @@ export default function AutoReplenishment() {
                       <div className="flex items-center justify-between">
                         <div className="text-xs text-slate-500 dark:text-slate-400">
                           {s.stockoutDays && `Habis ~${s.stockoutDays} hari lagi`}
-                          {s.totalCost ? ` · Est. $${s.totalCost?.toLocaleString()}` : ''}
+                          {s.totalCost ? ` · Est. ${fmtRp(s.totalCost)}` : ''}
                         </div>
                         <button onClick={() => orderNow(s)} className="btn btn-primary text-xs py-1">
                           Order Sekarang
@@ -309,7 +310,7 @@ export default function AutoReplenishment() {
                           <div className="font-semibold text-sm text-slate-900 dark:text-slate-100 truncate">{o.itemName}</div>
                           <div className="text-xs text-slate-400 mt-0.5">
                             qty: {o.quantity || o.suggestedQuantity}
-                            {o.totalCost ? ` · $${o.totalCost.toLocaleString()}` : ''}
+                            {o.totalCost ? ` · ${fmtRp(o.totalCost)}` : ''}
                             {o.supplierName ? ` · ${o.supplierName}` : ''}
                           </div>
                         </div>

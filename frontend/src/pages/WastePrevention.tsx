@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { getWasteItems, applyWasteAction, getDashboardStats } from '../lib/api'
 import Modal from '../components/ui/Modal'
 import type { WasteItem } from '../types'
+import { fmtRp } from '../lib/currency'
 import toast from 'react-hot-toast'
 
 const ACTION_MAP: Record<string, { label: string; cls: string }> = {
@@ -98,12 +99,12 @@ export default function WastePrevention() {
         </div>
         <div className="kpi-card">
           <div className="text-xs text-slate-500 dark:text-slate-400">Nilai At Risk</div>
-          <div className="text-2xl font-semibold text-amber-600">${loading ? '…' : totalValue.toLocaleString()}</div>
+          <div className="text-2xl font-semibold text-amber-600">{loading ? '…' : fmtRp(totalValue)}</div>
           <div className="text-xs text-slate-400">Estimasi nilai terbuang</div>
         </div>
         <div className="kpi-card">
           <div className="text-xs text-slate-500 dark:text-slate-400">Waste Prevented</div>
-          <div className="text-2xl font-semibold text-green-600">${kpi.prevented.toLocaleString()}</div>
+          <div className="text-2xl font-semibold text-green-600">{fmtRp(kpi.prevented)}</div>
           <div className="text-xs text-slate-400">Total berhasil dicegah</div>
         </div>
       </div>
@@ -127,7 +128,7 @@ export default function WastePrevention() {
                 <div className="flex items-start justify-between mb-2">
                   <div>
                     <div className="font-semibold text-sm text-slate-900 dark:text-slate-100">{item.itemName}</div>
-                    <div className="text-xs text-slate-500 dark:text-slate-400">{item.category} · {item.quantity} units · ${item.value.toLocaleString()}</div>
+                    <div className="text-xs text-slate-500 dark:text-slate-400">{item.category} · {item.quantity} units · {fmtRp(item.value)}</div>
                   </div>
                   <span className={`badge text-xs ${urgencyBadge(item.daysUntilExpiry)}`}>
                     {item.daysUntilExpiry} hari lagi

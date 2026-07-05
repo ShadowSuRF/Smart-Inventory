@@ -20,7 +20,7 @@ const STATS = [
   { value:'95.8', suffix:'%', label:'Forecast Accuracy', sub:'Gradient Boosting model' },
   { value:'31850', suffix:'', label:'Training Rows', sub:'Jan 2024 – Jun 2026' },
   { value:'11', suffix:'', label:'Halaman Fungsional', sub:'Full-stack web app' },
-  { value:'4280', prefix:'$', label:'Waste Prevented/bulan', sub:'Estimasi penghematan' },
+  { value:'4.280.000', prefix:'Rp ', label:'Waste Prevented/bulan', sub:'Estimasi penghematan' },
 ]
 
 function StatNumber({ target, prefix='', suffix='', started }: { target:number; prefix?:string; suffix?:string; started:boolean }) {
@@ -193,7 +193,7 @@ export default function Landing() {
             <div className="p-4 grid grid-cols-4 gap-3">
               {[
                 {label:'Total Items',    value:'8.420', icon:'📦', color:'#2563eb'},
-                {label:'Stock Value',   value:'$142K', icon:'📈', color:'#16a34a'},
+                {label:'Stock Value',   value:'Rp 142Jt', icon:'📈', color:'#16a34a'},
                 {label:'Waste Rate',   value:'2.4%',  icon:'🌱', color:'#8b5cf6'},
                 {label:'Critical',     value:'3',     icon:'⚠️',  color:'#ef4444'},
               ].map((k,i)=>(

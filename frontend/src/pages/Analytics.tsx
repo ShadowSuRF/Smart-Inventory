@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { getAnalytics, getAnalyticsHeatmap } from '../lib/api'
+import { fmtRp } from '../lib/currency'
 import toast from 'react-hot-toast'
 
 const ratingBadge = (r: string) =>
@@ -52,7 +53,7 @@ export default function Analytics() {
 
   useEffect(() => { fetchData() }, [fetchData])
 
-  const fmtK = (v: number) => v >= 1000 ? `$${(v/1000).toFixed(0)}K` : `$${v}`
+  // fmtRp from currency.ts
 
   return (
     <div>
@@ -87,7 +88,7 @@ export default function Analytics() {
             </div>
             <div className="kpi-card">
               <div className="text-xs text-slate-500 dark:text-slate-400">Net Profit Est.</div>
-              <div className="text-2xl font-semibold text-blue-600">{data?.totalNetProfit ? fmtK(data.totalNetProfit) : '—'}</div>
+              <div className="text-2xl font-semibold text-blue-600">{data?.totalNetProfit ? fmtRp(data.totalNetProfit) : '—'}</div>
               <div className="text-xs text-slate-400">Estimasi dari inventori</div>
             </div>
           </>
@@ -105,8 +106,8 @@ export default function Analytics() {
                   <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                   <XAxis type="number" tick={{ fontSize:10 }} />
                   <YAxis dataKey="category" type="category" tick={{ fontSize:10 }} width={100} />
-                  <Tooltip formatter={(v: any) => [`$${Number(v).toLocaleString()}`, 'Waste Loss']} />
-                  <Bar dataKey="value" fill="#ef4444" radius={[0,3,3,0]} name="Waste ($)" />
+                  <Tooltip formatter={(v: any) => [fmtRp(Number(v)), 'Waste Loss (Rp)']} />
+                  <Bar dataKey="value" fill="#ef4444" radius={[0,3,3,0]} name="Waste Loss" />
                 </BarChart>
               </ResponsiveContainer>
             ) : (
@@ -154,7 +155,7 @@ export default function Analytics() {
           <div key={k.label} className="card text-center">
             <div className="text-xs text-slate-500 dark:text-slate-400 mb-1">{k.label}</div>
             <div className={`text-xl font-semibold ${k.color}`}>
-              {loading ? '…' : k.val ? fmtK(k.val) : '—'}
+              {loading ? '…' : k.val ? fmtRp(k.val) : '—'}
             </div>
           </div>
         ))}
