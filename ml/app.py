@@ -879,10 +879,16 @@ def _generate_training_csv_from_inventory(inventory: list, user_id: str) -> str:
     return out_path
 
 
+# State training per-user (simpel, cukup untuk server Flask single-process)
+_user_training_status: dict = {}
+# Format: { user_id: { 'status': 'in_progress'|'done'|'error', 'result': {...} } }
+
+
 @app.route('/model/retrain', methods=['POST'])
 def retrain():
-    """Retrain per-user: simpan pkl ke ml/models/{user_id}/.
-    Setiap user punya folder model sendiri — ganti akun tidak kacaukan model user lain.
+    """Retrain per-user — return SEGERA, training di background thread.
+    Node polling /model/training-status?user_id=xxx setiap 2-3 detik.
+    Tidak ada base64 transfer pkl — Flask simpan ke disk, Node baca status saja.
     """
     body      = request.get_json(silent=True) or {}
     inventory = body.get('inventory', [])
@@ -891,65 +897,103 @@ def retrain():
     if not inventory:
         return jsonify({'success': False, 'error': 'Tidak ada data inventory'}), 400
 
-    try:
-        # Folder model per-user
-        model_dir = model._user_model_dir(user_id)
-        os.makedirs(model_dir, exist_ok=True)
-        print(f'[ML] Retraining user {user_id[:8]} → {model_dir}  ({len(inventory)} produk)')
+    if _user_training_status.get(user_id, {}).get('status') == 'in_progress':
+        return jsonify({'success': True, 'status': 'already_in_progress',
+                        'message': 'Training sudah berjalan untuk akun ini'})
 
-        # Generate training CSV dari inventory user
-        csv_path = _generate_training_csv_from_inventory(inventory, user_id)
+    # Tandai mulai training
+    _user_training_status[user_id] = {'status': 'in_progress', 'result': None}
 
-        # Train — simpan pkl ke folder user
-        results = train_gb_models(csv_path=csv_path, make_plots=False, compare=False, model_dir=model_dir)
+    def _do_train():
+        try:
+            model_dir = model._user_model_dir(user_id)
+            os.makedirs(model_dir, exist_ok=True)
+            print(f'[ML] 🔄 Training user {user_id[:8]} ({len(inventory)} produk)...')
 
-        # Simpan metrics per-user
-        import json as _j, base64 as _b64
-        trained_at = time.strftime('%Y-%m-%d %H:%M:%S')
-        metrics = {
-            'data_source':     'user_inventory',
-            'data_label':      f'Inventory kamu ({len(inventory)} produk)',
-            'demand_accuracy': round(results['demand']['acc'], 1),
-            'demand_mape':     round(results['demand']['mape'], 1),
-            'profit_accuracy': round(results['profit']['acc'], 1),
-            'training_rows':   results.get('training_rows', len(inventory) * 912),
-            'trained_at':      trained_at,
-            'n_features':      33,
-        }
-        with open(os.path.join(model_dir, 'model_metrics.json'), 'w') as f:
-            _j.dump(metrics, f, indent=2)
+            csv_path = _generate_training_csv_from_inventory(inventory, user_id)
+            results  = train_gb_models(csv_path=csv_path, make_plots=False,
+                                       compare=False, model_dir=model_dir)
 
-        # Invalidate cache supaya next request load model baru
-        model.invalidate_cache(user_id)
+            import json as _j
+            trained_at = time.strftime('%Y-%m-%d %H:%M:%S')
+            metrics = {
+                'data_source':     'user_inventory',
+                'data_label':      f'Inventory kamu ({len(inventory)} produk)',
+                'demand_accuracy': round(results['demand']['acc'], 1),
+                'demand_mape':     round(results['demand']['mape'], 1),
+                'profit_accuracy': round(results['profit']['acc'], 1),
+                'training_rows':   len(inventory) * 912,
+                'trained_at':      trained_at,
+                'n_features':      33,
+            }
+            with open(os.path.join(model_dir, 'model_metrics.json'), 'w') as f:
+                _j.dump(metrics, f, indent=2)
 
-        # Return pkl sebagai base64 untuk disimpan Node ke MongoDB (backup)
-        def _read_b64(path):
-            if os.path.exists(path):
-                with open(path, 'rb') as f: return _b64.b64encode(f.read()).decode('utf-8')
-            return None
+            model.invalidate_cache(user_id)
 
-        model_files = {
-            'gb_demand':     _read_b64(os.path.join(model_dir, 'gb_demand.pkl')),
-            'gb_profit':     _read_b64(os.path.join(model_dir, 'gb_profit.pkl')),
-            'feat_mean':     _read_b64(os.path.join(model_dir, 'feat_mean.npy')),
-            'feat_std':      _read_b64(os.path.join(model_dir, 'feat_std.npy')),
-            'feature_names': _read_b64(os.path.join(model_dir, 'feature_names.npy')),
-        }
+            # Hapus file CSV sementara
+            if os.path.exists(csv_path):
+                os.remove(csv_path)
 
-        print(f'[ML] ✅ User {user_id[:8]} trained: demand={metrics["demand_accuracy"]}%  profit={metrics["profit_accuracy"]}%')
+            _user_training_status[user_id] = {
+                'status': 'done',
+                'result': {
+                    'success':         True,
+                    'demand_accuracy': metrics['demand_accuracy'],
+                    'demand_mape':     metrics['demand_mape'],
+                    'profit_accuracy': metrics['profit_accuracy'],
+                    'training_rows':   metrics['training_rows'],
+                    'inventory_count': len(inventory),
+                    'trained_at':      trained_at,
+                    'data_source':     'user_inventory',
+                    'data_label':      metrics['data_label'],
+                }
+            }
+            print(f'[ML] ✅ User {user_id[:8]}: demand={metrics["demand_accuracy"]}%  profit={metrics["profit_accuracy"]}%')
 
-        return jsonify({
-            'success':         True,
-            'demand_accuracy': metrics['demand_accuracy'],
-            'demand_mape':     metrics['demand_mape'],
-            'profit_accuracy': metrics['profit_accuracy'],
-            'training_rows':   metrics['training_rows'],
-            'inventory_count': len(inventory),
-            'model_files':     model_files,
-        })
-    except Exception as e:
-        print(f'[ML] Retrain error (user {user_id[:8]}): {e}')
-        return jsonify({'success': False, 'error': str(e)}), 500
+        except Exception as e:
+            print(f'[ML] ❌ Training error user {user_id[:8]}: {e}')
+            _user_training_status[user_id] = {
+                'status': 'error',
+                'result': {'success': False, 'error': str(e)}
+            }
+
+    threading.Thread(target=_do_train, daemon=True).start()
+
+    return jsonify({
+        'success': True,
+        'status':  'started',
+        'message': f'Training dimulai untuk {len(inventory)} produk — polling /model/training-status setiap 2-3 detik',
+    })
+
+
+@app.route('/model/training-status')
+def training_status():
+    """Flask-side polling endpoint — Node tanya status training user ini."""
+    user_id = request.args.get('user_id', '')
+    if not user_id:
+        return jsonify({'status': 'idle', 'model_ready': False})
+
+    ts = _user_training_status.get(user_id, {})
+    status = ts.get('status', 'idle')
+
+    if status == 'done':
+        # Consume result supaya polling berikutnya kembali ke model_ready check
+        result = ts.get('result', {})
+        _user_training_status.pop(user_id, None)
+        return jsonify({'status': 'done', 'result': result, 'model_ready': True})
+
+    if status == 'error':
+        result = ts.get('result', {})
+        _user_training_status.pop(user_id, None)
+        return jsonify({'status': 'error', 'result': result, 'model_ready': False})
+
+    if status == 'in_progress':
+        return jsonify({'status': 'in_progress', 'model_ready': False})
+
+    # Tidak ada training aktif — cek apakah model sudah ada di disk
+    model_ready = model.get_user_model(user_id) is not None
+    return jsonify({'status': 'idle', 'model_ready': model_ready})
 
 
 # ════════════════════════════════════════════════════════════════════════════

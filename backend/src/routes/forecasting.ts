@@ -544,34 +544,53 @@ router.post('/retrain', async (req: AuthRequest, res: Response) => {
 
   ;(async () => {
     try {
-      const ml = await mlFetchLong('/model/retrain', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+      // Trigger Flask — LANGSUNG return (background thread di Flask, tidak blocking)
+      const startRes = await mlFetch('/model/retrain', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ inventory: inventoryData, user_id: uid.toString() }),
       })
-      if (!ml?.success) { _trainingResult = { success: false, error: ml?.error || 'Training gagal' }; return }
 
-      const trainingRows = ml.training_rows || items.length * 912
-      const modelDoc: any = {
-        userId: uid, demandAccuracy: ml.demand_accuracy, demandMape: ml.demand_mape,
-        profitAccuracy: ml.profit_accuracy, trainingRows,
-        trainedAt: new Date(), dataSource: 'user_inventory',
-        dataLabel: `Inventory kamu (${items.length} produk)`, inventoryCount: items.length,
+      if (!startRes?.success) {
+        _trainingResult = {
+          success: false,
+          error: startRes?.error || 'Flask ML API tidak merespons. Pastikan python3 ml/app.py sudah dijalankan.'
+        }
+        return
       }
-      if (ml.model_files) {
-        const buf = (b64: string) => Buffer.from(b64, 'base64')
-        if (ml.model_files.gb_demand)     modelDoc.gbDemandPkl  = buf(ml.model_files.gb_demand)
-        if (ml.model_files.gb_profit)     modelDoc.gbProfitPkl  = buf(ml.model_files.gb_profit)
-        if (ml.model_files.feat_mean)     modelDoc.featMean     = buf(ml.model_files.feat_mean)
-        if (ml.model_files.feat_std)      modelDoc.featStd      = buf(ml.model_files.feat_std)
-        if (ml.model_files.feature_names) modelDoc.featureNames = buf(ml.model_files.feature_names)
+
+      // Poll Flask /model/training-status setiap 3 detik
+      const MAX_WAIT = 15 * 60 * 1000
+      const started  = Date.now()
+      while (Date.now() - started < MAX_WAIT) {
+        await new Promise(r => setTimeout(r, 3000))
+        const statusRes = await mlFetch(`/model/training-status?user_id=${uid}`)
+        if (!statusRes) continue
+
+        if (statusRes.status === 'done' || statusRes.status === 'error') {
+          const r = statusRes.result || {}
+          if (!r.success) {
+            _trainingResult = { success: false, error: r.error || 'Training gagal' }
+            return
+          }
+          // Simpan metadata ke MongoDB (tanpa pkl binary — sudah di disk Flask)
+          await UserMLModel.findOneAndUpdate({ userId: uid }, {
+            $set: {
+              userId: uid, demandAccuracy: r.demand_accuracy, demandMape: r.demand_mape,
+              profitAccuracy: r.profit_accuracy, trainingRows: r.training_rows || items.length * 912,
+              trainedAt: new Date(r.trained_at || Date.now()),
+              dataSource: 'user_inventory',
+              dataLabel: r.data_label || `Inventory kamu (${items.length} produk)`,
+              inventoryCount: items.length,
+            }
+          }, { upsert: true })
+
+          _trainingResult = { success: true, ...r, inventory_count: items.length }
+          return
+        }
+        // status === 'in_progress' → lanjut poll
       }
-      await UserMLModel.findOneAndUpdate({ userId: uid }, { $set: modelDoc }, { upsert: true })
-      _trainingResult = {
-        success: true, demand_accuracy: ml.demand_accuracy, demand_mape: ml.demand_mape,
-        profit_accuracy: ml.profit_accuracy, training_rows: trainingRows,
-        inventory_count: items.length, trained_at: modelDoc.trainedAt.toISOString(),
-        data_source: 'user_inventory', data_label: modelDoc.dataLabel,
-      }
+      _trainingResult = { success: false, error: 'Training timeout. Coba lagi.' }
     } catch (e: any) { _trainingResult = { success: false, error: e.message } }
     finally { _trainingInProgress = false }
   })()
