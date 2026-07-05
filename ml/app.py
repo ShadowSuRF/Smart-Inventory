@@ -129,7 +129,7 @@ def _metrics(pred, actual, name=''):
     }
 
 
-def train_gb_models(csv_path: str = CSV_PATH, make_plots: bool = False, compare: bool = False, model_dir: str | None = None):
+def train_gb_models(csv_path: str = CSV_PATH, make_plots: bool = False, compare: bool = False, model_dir=None):
     """Train GB demand + profit. Simpan pkl ke model_dir (per-user) atau BASE (legacy)."""
     from sklearn.ensemble import GradientBoostingRegressor
     save_dir = model_dir or BASE  # per-user folder atau global fallback
@@ -465,7 +465,7 @@ class ModelManager:
         safe = ''.join(c for c in user_id if c.isalnum())[:16] or 'default'
         return os.path.join(BASE, 'models', safe)
 
-    def _load_user(self, user_id: str) -> dict | None:
+    def _load_user(self, user_id: str):
         """Load model untuk user tertentu. Return dict model atau None jika belum training."""
         model_dir = self._user_model_dir(user_id)
         demand_path = os.path.join(model_dir, 'gb_demand.pkl')
@@ -500,7 +500,7 @@ class ModelManager:
             print(f'[ML] Load user model failed ({user_id[:8]}): {e}')
             return None
 
-    def get_user_model(self, user_id: str) -> dict | None:
+    def get_user_model(self, user_id: str):
         """Ambil model user dari cache atau load dari disk."""
         if user_id not in self._cache:
             self._cache[user_id] = self._load_user(user_id)
