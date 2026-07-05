@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express'
-import { InventoryItem, WasteItem } from '../models'
+import { InventoryItem, WasteItem, UserMLModel } from '../models'
 import { AuthRequest } from '../middleware/auth'
 
 const router = Router()
@@ -410,7 +410,7 @@ router.get('/ml-stats', async (req: AuthRequest, res: Response) => {
   const ml = await mlFetch('/model/stats')
   if (ml?.success) {
     // Merge dengan data MongoDB user (yang lebih spesifik per-user)
-    const { UserMLModel } = await import('../models')
+    // UserMLModel imported statically at top
     const userModel = await UserMLModel.findOne({ userId: uid }).select('-gbDemandPkl -gbProfitPkl -featMean -featStd -featureNames')
     if (userModel && userModel.dataSource === 'user_inventory') {
       return res.json({
@@ -433,7 +433,7 @@ router.get('/ml-stats', async (req: AuthRequest, res: Response) => {
   }
 
   // 2. Flask offline → cek MongoDB UserMLModel dulu
-  const { UserMLModel } = await import('../models')
+  // UserMLModel imported statically at top
   const userModel = await UserMLModel.findOne({ userId: uid }).select('-gbDemandPkl -gbProfitPkl -featMean -featStd -featureNames')
   if (userModel && userModel.dataSource === 'user_inventory') {
     return res.json({
@@ -483,90 +483,88 @@ router.post('/predict', async (req: AuthRequest, res: Response) => {
   res.json({ success: false, error: 'ML API tidak tersedia' })
 })
 
+// ── background training state ────────────────────────────────────────
+let _trainingInProgress = false
+let _trainingResult: any = null
+
 // ── POST /api/forecasting/retrain ────────────────────────────────────
-// Training dari inventory MongoDB user → simpan model ke MongoDB per-user
-// (bukan file disk bersama) supaya setiap user punya model sendiri dan
-// ganti akun tidak kehilangan training.
+// Return segera (async), frontend polling /retrain-status setiap 2 detik
 router.post('/retrain', async (req: AuthRequest, res: Response) => {
   const uid = req.userId!
   const items = await InventoryItem.find({ userId: uid })
-
   if (!items.length) {
-    return res.json({
-      success: false,
-      error: 'Belum ada inventory. Import Excel/CSV atau tambahkan item manual dulu sebelum training.'
-    })
+    return res.json({ success: false, error: 'Belum ada inventory. Import dulu sebelum training.' })
+  }
+  if (_trainingInProgress) {
+    return res.json({ success: true, status: 'in_progress', message: 'Training sedang berjalan...' })
   }
 
-  // Kirim inventory ke Flask untuk training
   const inventoryData = items.map((i: any) => ({
-    name:       i.name,
-    category:   i.category,
-    zone:       i.zone || 'A',
-    unit_price: i.unitPrice,
-    quantity:   i.quantity,
-    fill_level: i.fillLevel,
-    status:     i.status,
+    name: i.name, category: i.category, zone: i.zone || 'A',
+    unit_price: i.unitPrice, quantity: i.quantity, fill_level: i.fillLevel, status: i.status,
   }))
 
-  try {
-    const ml = await mlFetch('/model/retrain', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        inventory: inventoryData,
-        user_id: uid.toString(),
-        source: 'mongodb_user_inventory',
-      }),
-    })
+  _trainingInProgress = true; _trainingResult = null
 
-    if (!ml?.success) {
-      return res.json({ success: false, error: ml?.error || 'Training gagal di Flask' })
-    }
+  ;(async () => {
+    try {
+      const ml = await mlFetch('/model/retrain', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ inventory: inventoryData, user_id: uid.toString() }),
+      })
+      if (!ml?.success) { _trainingResult = { success: false, error: ml?.error || 'Training gagal' }; return }
 
-    // Simpan model files (base64) ke MongoDB per-user
-    const { UserMLModel } = await import('../models')
-    const now = new Date()
-    const modelDoc: any = {
-      userId:         uid,
-      demandAccuracy: ml.demand_accuracy,
-      demandMape:     ml.demand_mape,
-      profitAccuracy: ml.profit_accuracy,
-      trainingRows:   ml.training_rows || 0,
-      trainedAt:      now,
-      dataSource:     'user_inventory',
-      dataLabel:      `Inventory kamu (${items.length} produk)`,
-      inventoryCount: items.length,
-    }
+      const trainingRows = ml.training_rows || items.length * 912
+      const modelDoc: any = {
+        userId: uid, demandAccuracy: ml.demand_accuracy, demandMape: ml.demand_mape,
+        profitAccuracy: ml.profit_accuracy, trainingRows,
+        trainedAt: new Date(), dataSource: 'user_inventory',
+        dataLabel: `Inventory kamu (${items.length} produk)`, inventoryCount: items.length,
+      }
+      if (ml.model_files) {
+        const buf = (b64: string) => Buffer.from(b64, 'base64')
+        if (ml.model_files.gb_demand)     modelDoc.gbDemandPkl  = buf(ml.model_files.gb_demand)
+        if (ml.model_files.gb_profit)     modelDoc.gbProfitPkl  = buf(ml.model_files.gb_profit)
+        if (ml.model_files.feat_mean)     modelDoc.featMean     = buf(ml.model_files.feat_mean)
+        if (ml.model_files.feat_std)      modelDoc.featStd      = buf(ml.model_files.feat_std)
+        if (ml.model_files.feature_names) modelDoc.featureNames = buf(ml.model_files.feature_names)
+      }
+      await UserMLModel.findOneAndUpdate({ userId: uid }, { $set: modelDoc }, { upsert: true })
+      _trainingResult = {
+        success: true, demand_accuracy: ml.demand_accuracy, demand_mape: ml.demand_mape,
+        profit_accuracy: ml.profit_accuracy, training_rows: trainingRows,
+        inventory_count: items.length, trained_at: modelDoc.trainedAt.toISOString(),
+        data_source: 'user_inventory', data_label: modelDoc.dataLabel,
+      }
+    } catch (e: any) { _trainingResult = { success: false, error: e.message } }
+    finally { _trainingInProgress = false }
+  })()
 
-    // Simpan pkl files sebagai Buffer di MongoDB
-    if (ml.model_files) {
-      const buf = (b64: string) => Buffer.from(b64, 'base64')
-      if (ml.model_files.gb_demand)     modelDoc.gbDemandPkl   = buf(ml.model_files.gb_demand)
-      if (ml.model_files.gb_profit)     modelDoc.gbProfitPkl   = buf(ml.model_files.gb_profit)
-      if (ml.model_files.feat_mean)     modelDoc.featMean      = buf(ml.model_files.feat_mean)
-      if (ml.model_files.feat_std)      modelDoc.featStd       = buf(ml.model_files.feat_std)
-      if (ml.model_files.feature_names) modelDoc.featureNames  = buf(ml.model_files.feature_names)
-    }
+  return res.json({ success: true, status: 'started', message: `Training ${items.length} produk dimulai` })
+})
 
-    await UserMLModel.findOneAndUpdate(
-      { userId: uid },
-      { $set: modelDoc },
-      { upsert: true, new: true }
-    )
-
-    return res.json({
-      success:          true,
-      message:          `Model berhasil dilatih dari ${items.length} produk kamu`,
-      demand_accuracy:  ml.demand_accuracy,
-      profit_accuracy:  ml.profit_accuracy,
-      training_rows:    ml.training_rows,
-      inventory_count:  items.length,
-      trained_at:       now.toISOString(),
-    })
-  } catch (e: any) {
-    return res.json({ success: false, error: e.message || 'Flask ML API belum jalan. Jalankan: python3 ml/app.py' })
+// ── GET /api/forecasting/retrain-status ───────────────────────────────
+router.get('/retrain-status', async (req: AuthRequest, res: Response) => {
+  const uid = req.userId!
+  if (_trainingInProgress) return res.json({ success: true, status: 'in_progress' })
+  if (_trainingResult) {
+    const r = _trainingResult; _trainingResult = null
+    return res.json({ success: true, status: 'done', result: r })
   }
+  // Cek MongoDB — user mungkin reload page setelah training selesai
+  const userModel = await UserMLModel.findOne({ userId: uid })
+    .select('-gbDemandPkl -gbProfitPkl -featMean -featStd -featureNames')
+  if (userModel?.dataSource === 'user_inventory') {
+    return res.json({
+      success: true, status: 'done', result: {
+        success: true, demand_accuracy: userModel.demandAccuracy, demand_mape: userModel.demandMape,
+        profit_accuracy: userModel.profitAccuracy, training_rows: userModel.trainingRows,
+        inventory_count: userModel.inventoryCount, trained_at: userModel.trainedAt?.toISOString(),
+        data_source: userModel.dataSource, data_label: userModel.dataLabel,
+      }
+    })
+  }
+  return res.json({ success: true, status: 'idle' })
 })
 
 export default router

@@ -56,7 +56,8 @@ export default function AIForecasting() {
       ])
       setItems(itemsRes.data.data || [])
       setCatData(catRes.data.data || [])
-      if (statsRes?.data?.data) setMlStats(statsRes.data.data)
+      // Selalu set mlStats — bahkan null accuracy (not_trained) supaya KPI tampil benar, bukan stuck "Memuat…"
+      setMlStats(statsRes?.data?.data || { online: false, demand_accuracy: null, training_rows: 0, data_source: 'not_trained' })
       setSummary(summaryRes?.data?.data || [])
     } catch {
       toast.error('Gagal memuat data forecast')
@@ -118,101 +119,97 @@ export default function AIForecasting() {
       toast.error('Belum ada inventory. Import data dulu sebelum training.')
       return
     }
-
     setRetraining(true)
     setTrainingProgress(0)
     setTrainingPhase('Mengirim data inventory ke ML engine...')
 
-    // Step 1 — trigger retrain
+    // Trigger training (return segera — async di backend)
     try {
       await triggerModelRetrain()
     } catch (e: any) {
-      const msg = e?.response?.data?.error || 'Gagal memulai training'
+      const msg = e?.response?.data?.error || 'Gagal memulai training. Pastikan Flask ML API jalan: python3 ml/app.py'
       toast.error(msg)
-      setRetraining(false)
-      setTrainingPhase(null)
+      setRetraining(false); setTrainingPhase(null)
       return
     }
 
-    // Step 2 — animasi progress sambil polling ml-stats
-    // Flask training jalan di background thread (~10-150 detik tergantung jumlah item)
+    // Animasi progress + polling /retrain-status tiap 2 detik
     const PHASES = [
       { pct: 10, msg: `Memuat ${items.length} produk dari MongoDB...` },
       { pct: 25, msg: 'Membuat time-series training data (2.5 tahun)...' },
       { pct: 45, msg: 'Feature engineering 33 fitur...' },
       { pct: 65, msg: 'Melatih Gradient Boosting (demand model)...' },
       { pct: 82, msg: 'Melatih Gradient Boosting (profit model)...' },
-      { pct: 92, msg: 'Menyimpan model & menghitung akurasi...' },
+      { pct: 92, msg: 'Menyimpan model ke MongoDB...' },
     ]
-
     let phaseIdx = 0
-    const snapTrainedAt = mlStats?.trained_at  // catat waktu sebelum training
-
-    const POLL_INTERVAL = 2000
-    const MAX_WAIT_MS = 5 * 60 * 1000  // 5 menit timeout
     const startTime = Date.now()
+    const MAX_WAIT = 8 * 60 * 1000
 
     await new Promise<void>((resolve) => {
       const tick = setInterval(async () => {
         const elapsed = Date.now() - startTime
 
-        // Animasi progress berdasarkan waktu berlalu
-        const timeBasedPct = Math.min(90, (elapsed / (items.length * 30 * 1000 + 15000)) * 90)
-        const targetPct = Math.max(
-          phaseIdx < PHASES.length ? PHASES[phaseIdx].pct : 90,
-          timeBasedPct
-        )
+        // Animasi progress
+        const timeBasedPct = Math.min(90, (elapsed / (items.length * 30000 + 15000)) * 90)
+        const targetPct = Math.max(phaseIdx < PHASES.length ? PHASES[phaseIdx].pct : 90, timeBasedPct)
         setTrainingProgress(p => Math.min(p + (targetPct - p) * 0.3, 90))
 
-        // Geser fase berdasarkan waktu
-        const expectedPhaseIdx = Math.min(
-          Math.floor(elapsed / (items.length * 5000 + 10000)),
-          PHASES.length - 1
-        )
+        const expectedPhaseIdx = Math.min(Math.floor(elapsed / (items.length * 5000 + 10000)), PHASES.length - 1)
         if (expectedPhaseIdx > phaseIdx) {
           phaseIdx = expectedPhaseIdx
           setTrainingPhase(PHASES[phaseIdx].msg)
         }
 
-        // Timeout
-        if (elapsed > MAX_WAIT_MS) {
+        if (elapsed > MAX_WAIT) {
           clearInterval(tick)
           toast.error('Training timeout — cek terminal Flask')
-          setRetraining(false)
-          setTrainingPhase(null)
-          resolve()
-          return
+          setRetraining(false); setTrainingPhase(null)
+          resolve(); return
         }
 
-        // Poll ml-stats untuk cek apakah training selesai
+        // Poll /retrain-status
         try {
-          const statsRes = await api.get('/forecasting/ml-stats')
-          const stats = statsRes.data?.data
-          // Training selesai kalau data_source berubah ke user_inventory
-          // DAN trained_at berubah dari sebelum training
-          if (stats?.data_source === 'user_inventory' &&
-              stats?.trained_at !== snapTrainedAt) {
+          const statusRes = await api.get('/forecasting/retrain-status')
+          const { status, result } = statusRes.data
+
+          if (status === 'done') {
             clearInterval(tick)
             setTrainingProgress(100)
             setTrainingPhase('✅ Training selesai!')
-            setMlStats(stats)
-            toast.success(
-              `✅ Model berhasil dilatih dari ${items.length} produk kamu!  Accuracy: ${stats.demand_accuracy}%`
-            )
-            // Refresh chart otomatis setelah 800ms
-            setTimeout(async () => {
-              await fetchChart()
-              await fetchReference()
-              setRetraining(false)
-              setTrainingPhase(null)
-              setTrainingProgress(0)
-            }, 800)
+
+            if (result?.success) {
+              // Langsung update mlStats dari result — tidak perlu fetch ulang
+              setMlStats({
+                online:          true,
+                model_type:      'GradientBoostingRegressor (scikit-learn)',
+                demand_accuracy: result.demand_accuracy,
+                demand_mape:     result.demand_mape,
+                profit_accuracy: result.profit_accuracy,
+                training_rows:   result.training_rows,
+                n_features:      33,
+                trained_at:      result.trained_at,
+                data_source:     result.data_source,
+                data_label:      result.data_label,
+                inventory_count: result.inventory_count,
+              })
+              toast.success(
+                `✅ Training selesai! Accuracy: ${result.demand_accuracy?.toFixed(1)}%  |  ${result.training_rows?.toLocaleString()} rows dari ${result.inventory_count} produk`
+              )
+              // Refresh chart
+              setTimeout(async () => {
+                await fetchChart()
+                setRetraining(false); setTrainingPhase(null); setTrainingProgress(0)
+              }, 600)
+            } else {
+              toast.error(result?.error || 'Training gagal')
+              setRetraining(false); setTrainingPhase(null)
+            }
             resolve()
           }
-        } catch {
-          // ignore poll error, lanjutkan
-        }
-      }, POLL_INTERVAL)
+          // status === 'in_progress' → lanjut tunggu
+        } catch { /* ignore poll error */ }
+      }, 2000)
     })
   }
 
