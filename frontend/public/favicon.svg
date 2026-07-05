@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <!-- Box biru — kotak inventory -->
+  <rect x="3" y="6" width="26" height="22" rx="5" fill="#2563eb"/>
+  <!-- Garis tengah horizontal (tutup peti) -->
+  <path d="M3 13 L16 17.5 L29 13" stroke="white" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round" opacity="0.85"/>
+  <!-- Garis vertikal (sekat dalam) -->
+  <path d="M16 17.5 L16 28" stroke="white" stroke-width="1.6" stroke-linecap="round" opacity="0.6"/>
+  <!-- Daun hijau badge — sustainability -->
+  <circle cx="25.5" cy="7.5" r="7" fill="#0EA572" stroke="#2563eb" stroke-width="1.8"/>
+  <path d="M22 11C21.4 7.8 23.3 5 27.3 4.8C27.6 8.3 25.4 10.8 22 11Z" fill="white"/>
+  <path d="M22.4 10.5C23.7 8.3 25.2 6.8 27.1 5.6" stroke="#0EA572" stroke-width="0.55" stroke-linecap="round"/>
+</svg>

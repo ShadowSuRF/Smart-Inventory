@@ -107,7 +107,7 @@ router.get('/predictions', async (req: AuthRequest, res: Response) => {
     return res.json({ success: true, data: { predictions: [], horizon, accuracy: null, mape: null } })
   }
 
-  const months = Math.min(Math.max(Math.ceil(horizon / 30), 1), 12)
+  const months = Math.min(Math.max(Math.ceil(horizon / 30), 3), 12)
 
   // Kirim data PER KATEGORI dari inventory user ke Flask — bukan satu angka agregat.
   // Flask akan forecast tiap kategori secara independen dan sum-kan hasilnya.
@@ -267,7 +267,7 @@ router.get('/item/:itemId', async (req: AuthRequest, res: Response) => {
     if (!item) { res.status(404).json({ success: false, error: 'Item tidak ditemukan' }); return }
 
     const p      = itemMlParams(item)
-    const months = Math.min(Math.max(Math.ceil(horizon / 30), 1), 12)
+    const months = Math.min(Math.max(Math.ceil(horizon / 30), 3), 12)
     const ml = await mlFetch(`/forecast/monthly?months=${months}&price=${p.price}&cost=${p.cost}&stock=${p.stock}&fill_level=${p.fill_level}&base_demand=${p.base_demand}&user_id=${uid}`)
 
     const itemInfo = { _id: item._id, name: item.name, category: item.category, zone: item.zone, unitPrice: item.unitPrice, quantity: item.quantity, fillLevel: item.fillLevel }

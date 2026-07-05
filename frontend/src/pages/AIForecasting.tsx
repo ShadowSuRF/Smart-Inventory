@@ -318,8 +318,8 @@ export default function AIForecasting() {
 
         <div className="kpi-card">
           <div className="text-xs text-slate-500 dark:text-slate-400">Prediction Range</div>
-          <div className="text-2xl font-semibold text-blue-600">{horizon} Days</div>
-          <div className="text-xs text-slate-400">Forward looking window</div>
+          <div className="text-2xl font-semibold text-blue-600">{Math.round(horizon / 30)} Bulan</div>
+          <div className="text-xs text-slate-400">Mulai {new Date().toLocaleDateString('id-ID', { month: 'long', year: 'numeric' })}</div>
         </div>
 
         <div className="kpi-card">
@@ -398,11 +398,12 @@ export default function AIForecasting() {
                 <option disabled>— Tidak ada produk ditemukan —</option>
               )}
             </select>
-            <select className="input text-xs py-1 w-28" value={horizon}
+            <select className="input text-xs py-1 w-32" value={horizon}
               onChange={e => setHorizon(Number(e.target.value))}>
-              <option value={30}>30 Days</option>
-              <option value={90}>90 Days</option>
-              <option value={180}>180 Days</option>
+              <option value={90}>3 Bulan</option>
+              <option value={180}>6 Bulan</option>
+              <option value={270}>9 Bulan</option>
+              <option value={360}>12 Bulan</option>
             </select>
             <button onClick={handleRetrain} disabled={retraining}
               className="btn btn-primary text-xs py-1 disabled:opacity-70 disabled:cursor-wait flex items-center gap-1.5">

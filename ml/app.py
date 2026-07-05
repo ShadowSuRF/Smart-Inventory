@@ -587,22 +587,25 @@ class ModelManager:
     def forecast_monthly(self, params: dict, n_months: int = 6) -> list:
         today = datetime.date.today()
         out   = []
-
-        # lag_buf DIBAWA antar bulan supaya prediksi bulan ke-2 dapat
-        # input yang realistis (bukan reset ke base_demand tiap kali).
-        # Inisialisasi dengan seasonal level bulan pertama, bukan flat.
-        first_mo   = today.month
         init_sf    = 1.0 + 0.25 * np.sin(2 * np.pi * (today.timetuple().tm_yday - 80) / 365)
         init_level = float(params.get('base_demand', 100)) * init_sf
         lag_buf    = [init_level] * 30
 
+        # Mulai dari bulan SEKARANG, bukan bulan depan
         for m_off in range(n_months):
             yr = today.year + (today.month + m_off - 1) // 12
             mo = (today.month + m_off - 1) % 12 + 1
             first_day = datetime.date(yr, mo, 1)
 
+            # Hitung jumlah hari di bulan ini (untuk label)
+            if mo == 12:
+                last_day = datetime.date(yr + 1, 1, 1) - datetime.timedelta(days=1)
+            else:
+                last_day = datetime.date(yr, mo + 1, 1) - datetime.timedelta(days=1)
+            days_in_month = last_day.day
+
             td, tp = 0.0, 0.0
-            for day_i in range(30):
+            for day_i in range(days_in_month):
                 d   = first_day + datetime.timedelta(days=day_i)
                 doy = d.timetuple().tm_yday
                 p2  = {**params, 'month': d.month, 'day_of_week': d.weekday(),
@@ -613,12 +616,17 @@ class ModelManager:
                 td  += dem; tp += prof
                 lag_buf.append(dem); lag_buf.pop(0)
 
+            # Label: "Jul '26 (31 hr)" — nama bulan + tahun + jumlah hari
+            month_names = ['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Ags','Sep','Okt','Nov','Des']
+            label = f"{month_names[mo-1]} '{str(yr)[2:]} ({days_in_month} hr)"
+
             out.append({
                 'month':            f'{yr}-{mo:02d}',
-                'label':            first_day.strftime('%b %y'),
+                'label':            label,
                 'total_demand':     round(td),
                 'total_profit':     round(tp, 2),
-                'avg_daily_demand': round(td / 30, 1),
+                'avg_daily_demand': round(td / days_in_month, 1),
+                'days_in_month':    days_in_month,
             })
         return out
 
