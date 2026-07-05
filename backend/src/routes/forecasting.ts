@@ -392,9 +392,8 @@ router.get('/monthly-profit', async (req: AuthRequest, res: Response) => {
   const totalValue  = items.reduce((s, i) => s + i.quantity * i.unitPrice, 0)
   const totalRevBase  = totalValue * 1.35        // estimasi harga jual
   const totalCOGSBase = totalValue               // cost = unitPrice yg user input
-  const wasteBase = waste.length > 0
-    ? waste.reduce((s, w) => s + w.value, 0)
-    : totalValue * 0.04                          // 4% estimasi waste kalau belum ada data
+  // Waste HANYA dari WasteItem MongoDB user — kalau belum ada data waste, waste = 0
+  const wasteBase = waste.reduce((s: number, w: any) => s + w.value, 0)
   const avgFill = items.reduce((s, i) => s + i.fillLevel, 0) / items.length
   const sellThrough = Math.max(0.3, Math.min(0.95, 1 - avgFill / 100 + 0.4))
   const avgMonthlySold = Math.round(totalQty * sellThrough)
