@@ -1,0 +1,10 @@
+{
+  "data_source": "user_inventory",
+  "data_label": "Inventory kamu (51 produk)",
+  "demand_accuracy": 92.4,
+  "demand_mape": 7.6,
+  "profit_accuracy": 6.0,
+  "training_rows": 46512,
+  "trained_at": "2026-07-05 21:13:25",
+  "n_features": 33
+}
